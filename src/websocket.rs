@@ -4,7 +4,7 @@ use axum::{
 };
 use tokio::task;
 
-use crate::{authlayer, utils::decode_user_id};
+use crate::{authlayer, databaselayer, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
 use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use log::info;
@@ -45,22 +45,21 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
 
     //check if there is a game in redis for that user id
 
-    //game data:
-    //game_id: u32
-    //player_white: u32 (userId)
-    //player_black: u32
-    //game_created: timestamp
-    //game_initiated: bool
-    //last_moved: (id, timestamp)
-    //TODO: time_remaining_white: 5mins...
+    let game_id = match databaselayer::user_id_to_game_id(user_id).await {
+        Some(game_id) => game_id,
+        None => {
+            println!("user has no associated game"); //handle properly,
+            return;
+        }
+    };
 
-
+    
     task::spawn(async move {
-        message_receiver(receiver, user_id).await;
+        message_receiver(receiver, user_id, game_id).await;
     });
 
     task::spawn(async move {
-        message_sender(sender, user_id).await;
+        message_sender(sender, user_id, game_id).await;
     });
 }
 
@@ -79,7 +78,7 @@ async fn listen_for_token(stream: &mut WebSocket) -> Option<String> {
     None
 }
 
-async fn message_receiver(mut receiver: SplitStream<WebSocket>, user_id: u32) {
+async fn message_receiver(mut receiver: SplitStream<WebSocket>, user_id: u32, game_id: u32) {
     while let Some(Ok(message)) = receiver.next().await {
         if let Message::Text(text) = message {
             // do something
@@ -88,7 +87,7 @@ async fn message_receiver(mut receiver: SplitStream<WebSocket>, user_id: u32) {
     }    
 }
 
-async fn message_sender(mut sender: SplitSink<WebSocket, Message>, user_id: u32) {
+async fn message_sender(mut sender: SplitSink<WebSocket, Message>, user_id: u32, game_id: u32) {
     let _ = sender.send(Message::Text(format!("Successfully authenticated user: {}", user_id))).await;
 }
 

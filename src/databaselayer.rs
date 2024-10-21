@@ -92,9 +92,41 @@ pub async fn create_game(player_1: u32, player_2: u32) {
         timestamp
     ).await.unwrap();
 
+    //mapping for user_id -> game:
+    //TODO- need to prune when a game is closed
+    let _: () = con.hset(
+        format!("user:{}", player_1),
+        "game_id",
+        game_id.to_string()
+    ).await.unwrap();
+
+    let _: () = con.hset(
+        format!("user:{}", player_2),
+        "game_id",
+        game_id.to_string()
+    ).await.unwrap();
+
     println!("created game: {} for players: {}, {}", game_id, player_1, player_2);
 
     ()
+}
+
+pub async fn user_id_to_game_id(user_id: u32) -> Option<u32> {
+    let mut con = match redis_connection().await {
+        Ok(c) => c,
+        Err((_status, _json)) => {
+            println!("Failed connecting to redis! (user id to game id)");
+            return None; //handle this properly
+        },
+    };
+
+    let user_game_id: Option<String> = con.hget(format!("user:{}", user_id), "game_id").await.unwrap();
+
+    match user_game_id {
+        Some(game_id) => game_id.parse::<u32>().ok(),
+        None => None,
+    }
+
 }
 
 struct Game {
