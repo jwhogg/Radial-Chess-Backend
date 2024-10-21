@@ -8,6 +8,7 @@ use serde_json::json;
 use dotenv::dotenv;
 use crate::authlayer;
 use crate::databaselayer::redis_connection;
+use crate::databaselayer::create_game;
 
 pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse {
     
@@ -89,11 +90,11 @@ pub async fn match_maker() {
                         .collect();
     
                     if !valid_players.is_empty() {
-                        for (user_id, score) in valid_players {
+                        for (user_id, score) in &valid_players {
                             println!("Popped User: {}, Score (timestamp): {}", user_id, score);
                         }
-                        //create_game(valid_players.0, valid_players.1);
-                        break;
+                        create_game(valid_players[0].0.parse().unwrap(),
+                        valid_players[1].0.parse().unwrap()).await;
                     }
                 }
             }

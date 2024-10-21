@@ -3,10 +3,13 @@ use mysql::prelude::*;
 use redis::aio::MultiplexedConnection;
 use serde_json::json;
 use uuid::Uuid;
+use core::time;
 use std::env;
 use axum::{http::StatusCode, response::{IntoResponse, Json}};
 use redis::AsyncCommands;
+use chrono::{Utc};
 use dotenv::dotenv;
+
 
 pub fn connect_to_db() -> Result<PooledConn, Box<dyn std::error::Error>> {
     let url = env::var("DATABASE_URL")?;
@@ -54,4 +57,51 @@ pub async fn redis_connection() -> Result<MultiplexedConnection, (StatusCode, Js
     };
 
     Ok(con)
+}
+
+pub async fn create_game(player_1: u32, player_2: u32) {
+    let mut con = match redis_connection().await {
+        Ok(c) => c,
+        Err((_status, _json)) => {
+            println!("Failed connecting to redis! (create_game)");
+            return ();
+        },
+    };
+
+    let game_id: u32 = match con.incr("game_id_counter",1).await {
+        Ok(id) => id,
+        Err(_) => return (), //handle this..
+    };
+
+    let timestamp: i64 = Utc::now().timestamp();
+
+    let result: () = con.hset_multiple(
+        format!("game:{}", game_id),
+        &[
+            ("player_white", player_1.to_string()), // player IDs are integers, store them as strings
+            ("player_black", player_2.to_string()),
+            ("game_created", timestamp.to_string()), // Timestamp stored as string
+            ("game_initiated", 0.to_string()), // Game initiated state stored as a string
+            ("last_moved", format!("{} {}", player_2, timestamp)), // last_moved stored as a string
+        ]
+    ).await.unwrap();
+
+    let _: () = con.zadd(
+        "active_games",
+        game_id,
+        timestamp
+    ).await.unwrap();
+
+    println!("created game: {} for players: {}, {}", game_id, player_1, player_2);
+
+    ()
+}
+
+struct Game {
+    game_id: u32,
+    player_white: u32,
+    player_black: u32,
+    game_created: i64,
+    game_initiated: i64,
+    last_moved: (u32, i64), // (user_id, timestamp)
 }
