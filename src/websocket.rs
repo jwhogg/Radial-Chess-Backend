@@ -12,6 +12,7 @@ use crate::{authlayer, databaselayer, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
 use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use log::info;
+use redis::PubSub;
 extern crate pleco;
 use pleco::{core::piece_move::{MoveFlag, PreMoveInfo}, BitMove, Board, PieceType, SQ};
 
@@ -251,14 +252,36 @@ fn handle_send_reminder(user_id: u32, game_id: u32) {
 }
 
 async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
-    let mut sender = sender.lock().await;
-    let _ = sender.send(Message::Text(format!("Successfully authenticated user: {}", user_id))).await;
-    if let Some(game_data) = databaselayer::get_game(game_id).await {
-        //do stuff
-        let _ = sender.send(Message::Text(format!("game data: {:?}", game_data))).await;
-        //looks like: game data: {"player_black": "3", "game_initiated": "0", "last_moved": "3 1729519142", "player_white": "2", "game_created": "1729519142"}
+    // let mut sender = sender.lock().await;
+    // let _ = sender.send(Message::Text(format!("Successfully authenticated user: {}", user_id))).await;
+    // if let Some(game_data) = databaselayer::get_game(game_id).await {
+    //     //do stuff
+    //     let _ = sender.send(Message::Text(format!("game data: {:?}", game_data))).await;
+    //     //looks like: game data: {"player_black": "3", "game_initiated": "0", "last_moved": "3 1729519142", "player_white": "2", "game_created": "1729519142"}
 
+    // }
+    let mut con = match databaselayer::redis_connection().await {
+        Ok(c) => c,
+        Err((_status, _json)) => {
+            println!("Failed connecting to redis! (get game)");
+            return; //handle this properly
+        },
+    };
+    let channel_name = format!("game_updates:{}", game_id);
+    let mut pubsub = con.subscribe(&channel_name).await.unwrap();
+
+    loop {
+        // Wait for a message
+        let msg: redis::Msg = pubsub.get_message().await?;
+        let payload: String = msg.get_payload()?;
+
+        // Deserialize the JSON payload into a Game struct
+        let game: Game = serde_json::from_str(&payload)?;
+        println!("Received game update: {:?}", game);
+        //lock sender
+        //send fen, to, from, flag, whose turn it is to client
     }
+
 
 }
 
