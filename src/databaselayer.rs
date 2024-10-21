@@ -1,5 +1,6 @@
 use mysql::*;
 use mysql::prelude::*;
+use pleco::Board;
 use redis::aio::MultiplexedConnection;
 use serde_json::json;
 use uuid::Uuid;
@@ -88,6 +89,7 @@ pub async fn create_game(player_1: u32, player_2: u32) {
             ("game_created", timestamp.to_string()), // Timestamp stored as string
             ("game_initiated", 0.to_string()), // Game initiated state stored as a string
             ("last_moved", format!("{} {}", player_2, timestamp)), // last_moved stored as a string
+            ("board_state", Board::start_pos().fen().to_string()),
         ]
     ).await.unwrap();
 
@@ -164,8 +166,33 @@ pub async fn get_game(game_id: u32) -> Option<Game> {
             } else {
                 return None;
             }
-        }
+        },
+        board_state: game_data.get("board_state")?.parse().ok()?,
     })
+}
+
+pub async fn set_game(game: &Game) {
+    let mut con = match redis_connection().await {
+        Ok(c) => c,
+        Err((_status, _json)) => {
+            println!("Failed connecting to redis! (get game)");
+            return; //handle this properly
+        },
+    };
+
+    let _result: () = con.hset_multiple(
+        format!("game:{}", game.game_id),
+        &[
+            ("player_white", game.player_white.to_string()), // player IDs are integers, store them as strings
+            ("player_white_ready", game.player_white_ready.to_string()),
+            ("player_black", game.player_black.to_string()),
+            ("player_black_ready", game.player_black.to_string()),
+            ("game_created", game.game_created.to_string()), // Timestamp stored as string
+            ("game_initiated", game.game_initiated.to_string()), // Game initiated state stored as a string
+            ("last_moved", format!("{} {}", game.last_moved.0, game.last_moved.1)), // last_moved stored as a string
+            ("board_state", game.board_state.to_string()),
+        ]
+    ).await.unwrap();
 }
 
 pub async fn set_player_colour_ready(colour: &str, game_id: u32, status: bool) {
@@ -202,7 +229,22 @@ pub async fn initiate_game(game_id: u32) {
     let _: () = con.hset(game_key, "game_initiated", timestamp).await.expect("failed to initiate game");
 }
 
-#[derive(Debug)]
+pub async fn publish_update(game: &Game) {
+    let mut con = match redis_connection().await {
+        Ok(c) => c,
+        Err((_status, _json)) => {
+            println!("Failed connecting to redis! (get game)");
+            return; //handle this properly
+        },
+    };
+
+    let channel_name = format!("game_updates:{}", game.game_id);
+    let game_json = serde_json::to_string(&game).unwrap();
+
+    let _: () = con.publish(&channel_name, game_json).await.expect("failed publish of game state");
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Game {
     pub game_id: u32,
     pub player_white: u32,
@@ -212,4 +254,5 @@ pub struct Game {
     pub game_created: i64,
     pub game_initiated: i64,
     pub last_moved: (u32, i64), // (user_id, timestamp)
+    pub board_state: String,
 }

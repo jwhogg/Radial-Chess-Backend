@@ -23,6 +23,8 @@ const HOST_ADDR: &str = "127.0.0.1:8080";
 #[tokio::main]
 async fn main() {
 
+    env_logger::init();
+
     // Spawning the concurrent thread to make matches
     task::spawn(async {
         match_maker().await;

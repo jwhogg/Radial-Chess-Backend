@@ -1,13 +1,19 @@
+use std::sync::Arc;
+
 use axum::{
     extract::ws::{WebSocketUpgrade, Message, WebSocket},
     response::IntoResponse,
 };
-use tokio::task;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use tokio::{sync::Mutex, task};
 
 use crate::{authlayer, databaselayer, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
 use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use log::info;
+extern crate pleco;
+use pleco::{core::piece_move::{MoveFlag, PreMoveInfo}, BitMove, Board, PieceType, SQ};
 
 pub async fn websocket_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(handle_socket)
@@ -29,10 +35,6 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
         }
     };
 
-    //validated ok, carrying on:
-
-    let (sender, receiver) = stream.split();
-
     let user_id = match authlayer::get_user_id_from_token(&token).await {
         Ok(id) => id,
         Err(e) => {
@@ -53,14 +55,12 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
         }
     };
 
-    //ready player
-    //  - get colour by user_id
-    //  - set player_{colour}_ready -> 1
-    //  - if other player == 1, set game_initiated to timestamp
-    //  - check on loop until "game_initiated" is no longer 0
-    //      --> spin off receiver and messgaers
+    let (sender, receiver) = stream.split();
+
+    let sender = Arc::new(Mutex::new(sender));
     
     loop {
+        //need to add a clause for game expiry
         if let Some(game) = databaselayer::get_game(game_id).await {
             let mut player_colour = "";
             let mut opponent_ready = false;
@@ -74,17 +74,24 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
             databaselayer::set_player_colour_ready(player_colour, game_id, true).await;
 
             if opponent_ready {
+                databaselayer::initiate_game(game_id).await;
                 break;
             }
         }
     }
 
-    task::spawn(async move {
-        message_receiver(receiver, user_id, game_id).await;
+    task::spawn({
+        let sender_clone = Arc::clone(&sender);
+        async move {
+            message_receiver(receiver, sender_clone, user_id, game_id).await;
+        }
     });
 
-    task::spawn(async move {
-        message_sender(sender, user_id, game_id).await;
+    task::spawn({
+        let sender_clone = Arc::clone(&sender);
+        async move {
+            message_sender(sender_clone, user_id, game_id).await;
+        }
     });
 }
 
@@ -103,16 +110,148 @@ async fn listen_for_token(stream: &mut WebSocket) -> Option<String> {
     None
 }
 
-async fn message_receiver(mut receiver: SplitStream<WebSocket>, user_id: u32, game_id: u32) {
+async fn message_receiver(mut receiver: SplitStream<WebSocket>, mut sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
     while let Some(Ok(message)) = receiver.next().await {
-        if let Message::Text(text) = message {
-            // do something
-            info!("message from client: {}", text);
+        match message {
+            Message::Text(text) => {
+                handle_received_message(text, user_id, game_id).await;
+            },
+            Message::Ping(ping) => {
+                let mut sender = sender.lock().await;
+                sender.send(Message::Pong(ping)).await;
+            },
+            Message::Pong(pong) => {
+                let mut sender = sender.lock().await;
+                sender.send(Message::Ping(pong)).await;
+            },
+            Message::Close(reason) => {
+                // Handle closure by responding with a close frame
+                let mut sender = sender.lock().await;
+                sender.send(Message::Close(reason)).await;
+                info!("Connection closed");
+            },
+            _ => {},
         }
     }    
 }
 
-async fn message_sender(mut sender: SplitSink<WebSocket, Message>, user_id: u32, game_id: u32) {
+async fn handle_received_message(msg: String, user_id: u32, game_id: u32) {
+    //get current board fen from redis x
+    //check last_played != user_id x
+    //in the future: check the timer
+    //load the fen into pleco x
+    //validate the move x
+    //update the Game hashmap (fen, last_moved) x
+    //publish on the channel
+
+    //parse msg (move, surreder, offer draw, reminder)
+    let parsed_message: EventMessage = match serde_json::from_str(&msg) {
+        Ok(m) => m,
+        Err(e) => {
+            info!("Failed to parse JSON");
+            return;
+        },
+    };
+
+    match parsed_message.event.as_str() {
+        "game_move" => handle_move(parsed_message.data, user_id, game_id).await,
+        "game_surrender" => handle_surrender(user_id, game_id),
+        "game_offer_draw" => handle_offer_draw(user_id, game_id),
+        "game_accept_draw" => handle_accept_draw(user_id, game_id),
+        "game_decline_draw" => handle_decline_draw(user_id, game_id),
+        "game_reminder" => handle_send_reminder(user_id, game_id),
+        _ => (),
+    }
+}
+
+async fn handle_move(data: EventData, user_id: u32, game_id: u32) {
+    let game = match databaselayer::get_game(game_id).await {
+        Some(game) => game,
+        None => {
+            info!("Failed to retreive game (handle_received_message)");
+            return;
+        },
+    };
+
+    if game.last_moved.0 == user_id {
+        info!("Invalid! Player has already taken their turn");
+        return;
+    }
+
+    let mut board: Board = Board::from_fen(&game.board_state).expect("Failed to load board state");
+
+    let bit_move = match construct_bit_move(data, &board) {
+        Ok(bmove) => bmove,
+        Err(e) => {
+            info!("{}",e.as_str());
+            return;
+        },
+    };
+
+    board.apply_move(bit_move);
+
+    let mut updated_game = game.clone();
+    updated_game.board_state = board.fen().to_string();
+    updated_game.last_moved = (user_id, Utc::now().timestamp());
+
+    databaselayer::set_game(&game).await;
+    databaselayer::publish_update(&game).await;
+
+}
+
+fn construct_bit_move(parsed_move: EventData, board: &Board) -> Result<BitMove, String> {
+    let from = parsed_move.from; //handle better
+    let to = parsed_move.to;
+    let flags: MoveFlag = match parsed_move.flags.unwrap().as_str() { //handle unwrap better
+        "n" => MoveFlag::QuietMove,
+        "c" => MoveFlag::Capture { ep_capture: false },
+        "b" => MoveFlag::DoublePawnPush,
+        "np" => MoveFlag::Promotion {
+            capture: parsed_move.captured.is_some(),
+            prom: piece_type_from_str(parsed_move.promotion.unwrap().as_str())
+        },
+        "k" => MoveFlag::Castle { king_side: true },
+        "q" => MoveFlag::Castle { king_side: false },
+        "e" => MoveFlag::Capture { ep_capture: true },
+        _ => MoveFlag::QuietMove,  // Fallback if no match
+    };
+    if !(from.is_some() && to.is_some()) {
+        info!("Invalid Moves: {:?}, {:?}", from, to);
+        return Err("Invalid Move Data".to_string());
+    }
+    let info: PreMoveInfo = PreMoveInfo {
+        src: SQ(square_to_index(from.unwrap().as_str()).unwrap()),
+        dst: SQ(square_to_index(to.unwrap().as_str()).unwrap()),
+        flags,
+    };
+    
+    let bmove: BitMove = BitMove::init(info);
+    if board.generate_moves().into_iter().collect::<Vec<BitMove>>().contains(&bmove) {
+        return Ok(bmove);
+    }
+    else {
+        info!("move is not valid!");
+        return Err("Invalid Move".to_string());
+    }
+}
+
+fn handle_surrender(user_id: u32, game_id: u32) {
+}
+
+fn handle_offer_draw(user_id: u32, game_id: u32) {
+}
+
+fn handle_accept_draw(user_id: u32, game_id: u32) {
+}
+
+fn handle_decline_draw(user_id: u32, game_id: u32) {
+}
+
+fn handle_send_reminder(user_id: u32, game_id: u32) {
+}
+
+async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
+    let mut sender = sender.lock().await;
     let _ = sender.send(Message::Text(format!("Successfully authenticated user: {}", user_id))).await;
     if let Some(game_data) = databaselayer::get_game(game_id).await {
         //do stuff
@@ -168,28 +307,29 @@ async fn handle_message(message: String, user_id: usize) {
 //JSON Format
 // Note: when we use serde to parse the message, we parse it into the EventMessage struct, so if a message doesn't have this format, it will fail
 
-// #[derive(Serialize, Deserialize, Debug)]
-// #[serde(rename_all = "camelCase")]
-// struct EventMessage {
-//     event: String, //eg: game_start, game_move, game_surrender
-//     data: EventData,
-// }
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EventMessage {
+    event: String, //eg: game_start, game_move, game_surrender
+    data: EventData,
+}
 
-// #[derive(Serialize, Deserialize, Debug)]
-// #[serde(rename_all = "camelCase")]
-// struct EventData {
-//     player: PlayerColour,
-//     from: Option<String>,
-//     to: Option<String>,
-//     flags: Option<String>,
-//     status: Option<String>,
-// }
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EventData {
+    player: PlayerColour,
+    from: Option<String>,
+    to: Option<String>,
+    flags: Option<String>,
+    captured: Option<String>, //give the captured piece here, these 2 are optionals, only if there is a promotion (need to know if its a capturing promotion and to what piece)
+    promotion: Option<String>,
+}
 
-// #[derive(Serialize, Deserialize, Debug)]
-// enum PlayerColour {
-//     White,
-//     Black,
-// }
+#[derive(Serialize, Deserialize, Debug)]
+enum PlayerColour {
+    White,
+    Black,
+}
 
 // impl Not for PlayerColour {
 //     type Output = PlayerColour;
@@ -201,4 +341,27 @@ async fn handle_message(message: String, user_id: usize) {
 //         }
 //     }
 // }
+
+fn piece_type_from_str(piece_str: &str) -> PieceType {
+    match piece_str {
+        "p" => PieceType::P,
+        "n" => PieceType::N,
+        "b" => PieceType::B,
+        "r" => PieceType::R,
+        "q" => PieceType::Q,
+        "k" => PieceType::K,
+        _ => PieceType::None, // Default if no match found
+    }
+}
+
+fn square_to_index(square: &str) -> Option<u8> {
+    if square.len() != 2 {
+        return None;
+    }
+    let file = square.chars().nth(0)?;
+    let rank = square.chars().nth(1)?.to_digit(10)?;
+    let file_index = (file as u8).checked_sub('a' as u8)?;
+    let rank_index = (rank as u8).checked_sub(1)?;
+    Some(rank_index * 8 + file_index)
+}
 
