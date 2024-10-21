@@ -2,46 +2,94 @@ use axum::{
     extract::ws::{WebSocketUpgrade, Message, WebSocket},
     response::IntoResponse,
 };
+use tokio::task;
 
-use crate::utils::decode_user_id;
+use crate::{authlayer, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
+use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
+use log::info;
 
 pub async fn websocket_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(handle_socket)
 }
 
-async fn handle_socket(mut socket: WebSocket) { //also takes the token here
-    //PSUEDO-CODE:
+async fn handle_socket(mut stream: WebSocket) { //also takes the token here
 
-    //let user_id: usize = decode_user_id(JWT)
-    //let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let token: String = match listen_for_token(&mut stream).await {
+        Some(token) => token,
+        None => {
+            //TODO: need to properly handle closing the stream, if a game is open, the other player should be informed and the game closed.
+            // or we have some sort of re-connection within a time window
+            //note to self: when a game is created, players have N mins to join before the game expires
+            let _ = stream
+                .send(Message::Text(format!("Authentication failed")))
+                .await;
+            let _ = stream.close().await;
+            return;
+        }
+    };
 
-    // let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    //validated ok, carrying on:
 
-	// let message_task = tokio::spawn(async {
-	// 	while let Some(message) = ws_receiver.next().await {
-	// 		match message { Ok(Message::Text(text)) => {
-	// 			handle_messgae(text);
-	// 		}
-	// 	}
-	// });
+    let (sender, receiver) = stream.split();
 
-    // let game_update_task = tokio::spawn(async {
-	// 	let mut pubsub = client
-	// 		.get_async_connection()
-	// 		.await.unwrap().into_pubsub();
+    let user_id = match authlayer::get_user_id_from_token(&token).await {
+        Ok(id) => id,
+        Err(e) => {
+            info!("Failed to resolve userId from token: {}", e.1);
+            return;
+        }
+    };
 
-    //     loop {
-    //         match pubsub.on_message().await {
-    //             Ok(message) => {
-    //                 message_payload = messgage.getPayload().unwrap()
-    //                 ws_sender.send(Message::Text(msg_payload)).await.unwrap();
-    //             }
-    //             Err(e) => {
-    //                 break;
-	// 		}
-	// 	}
-	// });
+    info!("Authenticated user: {}", user_id);
+
+    //check if there is a game in redis for that user id
+
+    //game data:
+    //game_id: u32
+    //player_white: u32 (userId)
+    //player_black: u32
+    //game_created: timestamp
+    //game_initiated: bool
+    //last_moved: (id, timestamp)
+    //TODO: time_remaining_white: 5mins...
+
+
+    task::spawn(async move {
+        message_receiver(receiver, user_id).await;
+    });
+
+    task::spawn(async move {
+        message_sender(sender, user_id).await;
+    });
+}
+
+async fn listen_for_token(stream: &mut WebSocket) -> Option<String> {
+    if let Some(Ok(Message::Text(text))) = stream.next().await {
+        let data: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let token_value = data.get("token")?.to_string();
+        let token_value = token_value.trim_matches('"').to_string();
+
+        if authlayer::validate_token(&token_value.as_str()).await.is_ok() {
+            info!("Authenticated via WebSocket");
+            return Some(token_value);
+        }
+    }
+
+    None
+}
+
+async fn message_receiver(mut receiver: SplitStream<WebSocket>, user_id: u32) {
+    while let Some(Ok(message)) = receiver.next().await {
+        if let Message::Text(text) = message {
+            // do something
+            info!("message from client: {}", text);
+        }
+    }    
+}
+
+async fn message_sender(mut sender: SplitSink<WebSocket, Message>, user_id: u32) {
+    let _ = sender.send(Message::Text(format!("Successfully authenticated user: {}", user_id))).await;
 }
 
 async fn handle_message(message: String, user_id: usize) {

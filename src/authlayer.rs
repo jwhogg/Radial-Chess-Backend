@@ -12,7 +12,7 @@ use dotenv::dotenv; // For loading .env variables
 use crate::databaselayer;
 
 #[derive(Debug, Deserialize, Serialize)]
-struct Claims {
+pub struct Claims {
     sub: String,  // User ID (subject)
     exp: usize,   // Expiration time
 }
@@ -27,8 +27,14 @@ async fn get_jwks(jwks_url: &str) -> Result<serde_json::Value, String> {
 }
 
 // Function to validate the JWT token using the JWKS
-async fn validate_token(token: &str, jwks_url: &str) -> Result<TokenData<Claims>, String> {
-    let jwks = get_jwks(jwks_url).await?;
+pub async fn validate_token(token: &str) -> Result<TokenData<Claims>, String> {
+    dotenv().ok();
+
+    let jwks_url = match env::var("JWKS_URL") {
+        Ok(url) => url,
+        Err(_) => return Err("JWKS URL not configured".to_string()),
+    };
+    let jwks = get_jwks(&jwks_url).await?;
 
     let decoded_header = jsonwebtoken::decode_header(token)
         .map_err(|err| {
@@ -74,19 +80,16 @@ async fn validate_token(token: &str, jwks_url: &str) -> Result<TokenData<Claims>
 
 // Middleware to check for a valid 'sub' claim in the JWT token
 pub async fn get_jwt_sub<B>(req: &Request<B>) -> Result<u32, (StatusCode, String)> {
-    dotenv().ok();
-
-    let jwks_url = match env::var("JWKS_URL") {
-        Ok(url) => url,
-        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "JWKS URL not configured".to_string())),
-    };
-
     let token = match extract_bearer_token(req) {
         Some(token) => token,
         None => return Err((StatusCode::UNAUTHORIZED, "Authorization header missing or invalid".to_string())),
     };
+    get_user_id_from_token(token).await
+}
 
-    match validate_token(token, &jwks_url).await {
+pub async fn get_user_id_from_token(token: &str) -> Result<u32, (StatusCode, String)> {
+
+    match validate_token(token).await {
         Ok(token_data) => {
             //The subject will have the auth id (oath2 or auth0, eg: oath2|9231en290df193q10)
             if token_data.claims.sub.is_empty() {

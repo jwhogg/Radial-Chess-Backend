@@ -23,19 +23,6 @@ const HOST_ADDR: &str = "127.0.0.1:8080";
 #[tokio::main]
 async fn main() {
 
-    // let cors = CorsLayer::new()
-    // .allow_origin(Origin::exact("http://localhost:4040".parse().unwrap()))
-    // .allow_methods(vec![
-    //     Method::GET,
-    //     Method::POST,
-    //     Method::OPTIONS,
-    // ])
-    // .allow_headers(vec![
-    //     HeaderName::from_static("authorization"),
-    //     HeaderName::from_static("content-type"),
-    // ])
-    // .allow_credentials(true);
-
     // Spawning the concurrent thread to make matches
     task::spawn(async {
         match_maker().await;
