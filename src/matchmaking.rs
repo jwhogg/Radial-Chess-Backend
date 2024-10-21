@@ -48,11 +48,6 @@ pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse
         }
     }
 
-    //temp code to check the pool
-    // let members: Vec<(String, i64)> = con.zrange_withscores("matchmaking_pool", 0, -1).await.expect("failed to get members in matchmaking pool");
-    // for (member, score) in members {
-    //     println!("User: {}, Timestamp: {}", member, score);
-    // }
 }
 
 pub async fn bot_handler() {
@@ -80,18 +75,6 @@ pub async fn match_maker() {
     };
 
     loop {
-        // let result: redis::RedisResult<Vec<(String, f64)>> = con.zrange_withscores("matchmaking_pool", 0, -1).await;
-
-        // match result {
-        //     Ok(players) => {
-        //         for (user_id, score) in players {
-        //             println!("User: {}, Score (timestamp): {}", user_id, score);
-        //         }
-        //     }
-        //     Err(e) => {
-        //         eprintln!("Error fetching matchmaking pool: {}", e);
-        //     }
-        // }
         let player_count: i32 = con.zcard("matchmaking_pool").await.unwrap();
         if player_count < 2 {
             continue;
@@ -100,20 +83,16 @@ pub async fn match_maker() {
 
         match result {
             Ok(players) => {
-                if players.is_empty() {
-                    println!("No users in the matchmaking pool to pop.");
-                } else {
-                    // Filter out any invalid or empty entries
+                if !players.is_empty() {
                     let valid_players: Vec<(String, f64)> = players.into_iter()
                         .filter(|(user_id, _score)| !user_id.is_empty())  // Check if user_id is non-empty
                         .collect();
     
-                    if valid_players.is_empty() {
-                        println!("No valid players found to pop.");
-                    } else {
+                    if !valid_players.is_empty() {
                         for (user_id, score) in valid_players {
                             println!("Popped User: {}, Score (timestamp): {}", user_id, score);
                         }
+                        //create_game(valid_players.0, valid_players.1);
                         break;
                     }
                 }
@@ -122,43 +101,6 @@ pub async fn match_maker() {
                 eprintln!("Error performing ZPOPMIN on matchmaking pool: {}", e);
             }
         }
-        // let response: Result<Vec<(String, f64)>, redis::RedisError> = con.zmpop_min("matchmaking_pool", 2).await;
-        // println!("Raw Redis response: {:?}", response);
-        // redis::cmd("ZPOPMIN").arg("matchmaking_pool").arg(1).exec(&mut con).unwrap();
-        // let result: Result<Vec<(u32, f64)>, redis::RedisError> = con.zmpop_min("matchmaking_pool", 2).await;
-        // println!("{:?}", result);
-
-        // let two_players: Vec<(u32, f64)> = match result {
-        //     Ok(v) => v,
-        //     Err(e) => {
-        //         println!("Error: {}", e);
-        //         continue;
-        //     }
-        // };
-        // let two_players: Vec<(String, f64)> = match con.zmpop_min("matchmaking_pool", 2).await {
-        //     Ok(players) => players,
-        //     Err(e) => {
-        //         eprintln!("Error: {}", e);
-        //         continue;
-        //     }
-        // };
-
-        // if !two_players.is_empty() {
-        //     println!("{:?}", two_players);
-        // }
-
-
-        // let two_players: Vec<(String, f64)> = match con.zmpop_min("matchmaking_pool", 2).await {
-        //     Ok(p) => p,
-        //     Err(e) => {
-        //         eprintln!("Error calling zmpop_min: {:?}", e);
-        //         continue; // Continue the loop after logging the error
-        //     }
-        // };
-
-        // if !two_players.is_empty() {
-        //     println!("{:?}", two_players);
-        // }
     }
         
 
