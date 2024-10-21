@@ -53,7 +53,32 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
         }
     };
 
+    //ready player
+    //  - get colour by user_id
+    //  - set player_{colour}_ready -> 1
+    //  - if other player == 1, set game_initiated to timestamp
+    //  - check on loop until "game_initiated" is no longer 0
+    //      --> spin off receiver and messgaers
     
+    loop {
+        if let Some(game) = databaselayer::get_game(game_id).await {
+            let mut player_colour = "";
+            let mut opponent_ready = false;
+            if game.player_white == user_id {
+                player_colour = "white";
+                opponent_ready = game.player_black_ready;
+            } else if game.player_black == user_id {
+                player_colour = "black";
+                opponent_ready = game.player_white_ready;
+            }
+            databaselayer::set_player_colour_ready(player_colour, game_id, true).await;
+
+            if opponent_ready {
+                break;
+            }
+        }
+    }
+
     task::spawn(async move {
         message_receiver(receiver, user_id, game_id).await;
     });
@@ -92,6 +117,7 @@ async fn message_sender(mut sender: SplitSink<WebSocket, Message>, user_id: u32,
     if let Some(game_data) = databaselayer::get_game(game_id).await {
         //do stuff
         let _ = sender.send(Message::Text(format!("game data: {:?}", game_data))).await;
+        //looks like: game data: {"player_black": "3", "game_initiated": "0", "last_moved": "3 1729519142", "player_white": "2", "game_created": "1729519142"}
 
     }
 
