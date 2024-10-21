@@ -4,7 +4,7 @@ use redis::aio::MultiplexedConnection;
 use serde_json::json;
 use uuid::Uuid;
 use core::time;
-use std::env;
+use std::{collections::HashMap, env};
 use axum::{http::StatusCode, response::{IntoResponse, Json}};
 use redis::AsyncCommands;
 use chrono::{Utc};
@@ -126,7 +126,22 @@ pub async fn user_id_to_game_id(user_id: u32) -> Option<u32> {
         Some(game_id) => game_id.parse::<u32>().ok(),
         None => None,
     }
+}
 
+pub async fn get_game(game_id: u32) -> Option<HashMap<String, String>> {
+    let mut con = match redis_connection().await {
+        Ok(c) => c,
+        Err((_status, _json)) => {
+            println!("Failed connecting to redis! (get game)");
+            return None; //handle this properly
+        },
+    };
+
+    let game_key = format!("game:{}", game_id);
+    //handle err better
+    let game_data: HashMap<String, String> = con.hgetall(&game_key).await.expect("Failed getting game");
+    
+    Some(game_data)
 }
 
 struct Game {

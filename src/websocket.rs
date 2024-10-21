@@ -89,6 +89,12 @@ async fn message_receiver(mut receiver: SplitStream<WebSocket>, user_id: u32, ga
 
 async fn message_sender(mut sender: SplitSink<WebSocket, Message>, user_id: u32, game_id: u32) {
     let _ = sender.send(Message::Text(format!("Successfully authenticated user: {}", user_id))).await;
+    if let Some(game_data) = databaselayer::get_game(game_id).await {
+        //do stuff
+        let _ = sender.send(Message::Text(format!("game data: {:?}", game_data))).await;
+
+    }
+
 }
 
 async fn handle_message(message: String, user_id: usize) {
