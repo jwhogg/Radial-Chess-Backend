@@ -15,7 +15,7 @@ use redis::{PubSub, ToRedisArgs};
 use pleco;
 use pleco::{core::piece_move::{MoveFlag, PreMoveInfo}, BitMove, Board, PieceType, SQ};
 use dotenv::dotenv;
-
+use tokio::sync::mpsc::{self, Sender};
 
 // A game server to handle the game state when connecting over WebSocket to a single user
 pub struct GameServer {
@@ -162,6 +162,7 @@ fn handle_send_reminder() {
 }
 
 pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
+    let mut sender = sender.lock().await;
     // dotenv().ok();
     
     // let redis_url = env::var("REDIS_URL").unwrap();

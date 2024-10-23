@@ -12,7 +12,6 @@ use redis::AsyncCommands;
 use chrono::{Utc};
 use log::info;
 use dotenv::dotenv;
-use redis_derive::{FromRedisValue, ToRedisArgs};
 
 pub fn connect_to_db() -> Result<PooledConn, Box<dyn std::error::Error>> {
     let url = env::var("DATABASE_URL")?;
@@ -44,6 +43,7 @@ pub fn create_user(conn: &mut PooledConn, external_user_id: &str) -> Result<u32,
     }
 }
 
+//deprecated
 pub async fn redis_connection() -> Result<MultiplexedConnection, (StatusCode, Json<serde_json::Value>)> {
     dotenv().ok();
 
@@ -62,6 +62,7 @@ pub async fn redis_connection() -> Result<MultiplexedConnection, (StatusCode, Js
     Ok(con)
 }
 
+//TODO: rewrite using redis layer
 pub async fn create_game(player_1: u32, player_2: u32) {
     let mut con = match redis_connection().await {
         Ok(c) => c,
@@ -120,135 +121,7 @@ pub async fn create_game(player_1: u32, player_2: u32) {
     ()
 }
 
-pub async fn user_id_to_game_id(user_id: u32) -> Option<u32> {
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((_status, _json)) => {
-            println!("Failed connecting to redis! (user id to game id)");
-            return None; //handle this properly
-        },
-    };
-
-    let user_game_id: Option<String> = con.hget(format!("user:{}", user_id), "game_id").await.unwrap();
-
-    match user_game_id {
-        Some(game_id) => game_id.parse::<u32>().ok(),
-        None => None,
-    }
-}
-
-pub async fn get_game(game_id: u32) -> Option<Game> {
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((status, json)) => {
-            println!("Failed connecting to redis! (get game): {}, {:?}", status, json);
-            return None; //handle this properly
-        },
-    };
-
-    let game_key = format!("game:{}", game_id);
-    //handle err better
-    let game_data: HashMap<String, String> = con.hgetall(&game_key).await.expect("Failed getting game");
-    
-    Some(Game {
-        game_id,
-        player_white: game_data.get("player_white")?.parse().ok()?,
-        player_white_ready: game_data.get("player_white_ready")?.parse::<i32>().ok()? == 1,
-        player_black: game_data.get("player_black")?.parse().ok()?,
-        player_black_ready: game_data.get("player_black_ready")?.parse::<i32>().ok()? == 1,
-        game_created: game_data.get("game_created")?.parse().ok()?,
-        game_initiated: game_data.get("game_initiated")?.parse().ok()?,
-        last_moved: {
-            let last_moved_str = game_data.get("last_moved")?;
-            let parts: Vec<&str> = last_moved_str.split_whitespace().collect();
-            if parts.len() == 2 {
-                let user_id = parts[0].parse().ok()?;
-                let timestamp = parts[1].parse().ok()?;
-                (user_id, timestamp)
-            } else {
-                return None;
-            }
-        },
-        board_state: game_data.get("board_state")?.parse().ok()?,
-        previous_move: serde_json::from_str(&game_data.get("previous_move")?).unwrap(),
-    })
-}
-
-pub async fn set_game(game: &Game) {
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((_status, _json)) => {
-            println!("Failed connecting to redis! (get game)");
-            return; //handle this properly
-        },
-    };
-
-    let _result: () = con.hset_multiple(
-        format!("game:{}", game.game_id),
-        &[
-            ("player_white", game.player_white.to_string()), // player IDs are integers, store them as strings
-            ("player_white_ready", game.player_white_ready.to_string()),
-            ("player_black", game.player_black.to_string()),
-            ("player_black_ready", game.player_black.to_string()),
-            ("game_created", game.game_created.to_string()), // Timestamp stored as string
-            ("game_initiated", game.game_initiated.to_string()), // Game initiated state stored as a string
-            ("last_moved", format!("{} {}", game.last_moved.0, game.last_moved.1)), // last_moved stored as a string
-            ("board_state", game.board_state.to_string()),
-            ("previous_move", serde_json::to_string(&game.previous_move).unwrap()),
-        ]
-    ).await.unwrap();
-}
-
-pub async fn set_player_colour_ready(colour: &str, game_id: u32, status: bool) {
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((_status, _json)) => {
-            println!("Failed connecting to redis! (get game)");
-            return; //handle this properly
-        },
-    };
-
-    let game_key = format!("game:{}", game_id);
-
-
-    if colour == "white" {
-        let _: () = con.hset(game_key, "player_white_ready", if status {1} else {0}).await.expect("failed setting white ready");
-
-    } else if colour == "black" {
-        let _: () = con.hset(game_key, "player_black_ready", if status {1} else {0}).await.expect("failed setting black ready");
-    };
-    
-}
-
-pub async fn initiate_game(game_id: u32) {
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((_status, _json)) => {
-            println!("Failed connecting to redis! (get game)");
-            return; //handle this properly
-        },
-    };
-    let game_key = format!("game:{}", game_id);
-    let timestamp: i64 = Utc::now().timestamp();
-    let _: () = con.hset(game_key, "game_initiated", timestamp).await.expect("failed to initiate game");
-}
-
-pub async fn publish_update(game: &Game) {
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((_status, _json)) => {
-            println!("Failed connecting to redis! (get game)");
-            return; //handle this properly
-        },
-    };
-
-    let channel_name = format!("game_updates:{}", game.game_id);
-    let game_json = serde_json::to_string(&game).unwrap();
-
-    let _: () = con.publish(&channel_name, game_json).await.expect("failed publish of game state");
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRedisValue, ToRedisArgs)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Game {
     pub game_id: u32,
     pub player_white: u32,
@@ -260,7 +133,7 @@ pub struct Game {
     pub previous_move: Option<Move>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRedisValue, ToRedisArgs)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Move {
     pub from: String,
     pub to: String,
