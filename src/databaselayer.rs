@@ -2,6 +2,7 @@ use mysql::*;
 use mysql::prelude::*;
 use pleco::Board;
 use redis::aio::MultiplexedConnection;
+use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 use core::time;
@@ -9,8 +10,9 @@ use std::{collections::HashMap, env};
 use axum::{http::StatusCode, response::{IntoResponse, Json}};
 use redis::AsyncCommands;
 use chrono::{Utc};
+use log::info;
 use dotenv::dotenv;
-
+use redis_derive::{FromRedisValue, ToRedisArgs};
 
 pub fn connect_to_db() -> Result<PooledConn, Box<dyn std::error::Error>> {
     let url = env::var("DATABASE_URL")?;
@@ -52,7 +54,7 @@ pub async fn redis_connection() -> Result<MultiplexedConnection, (StatusCode, Js
         Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"message": "Failed to connect to Redis"})))),
     };
     
-    let mut con = match client.get_multiplexed_async_connection().await {
+    let con = match client.get_multiplexed_async_connection().await {
         Ok(c) => c,
         Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"message": "Failed to get Redis connection"})))),
     };
@@ -138,8 +140,8 @@ pub async fn user_id_to_game_id(user_id: u32) -> Option<u32> {
 pub async fn get_game(game_id: u32) -> Option<Game> {
     let mut con = match redis_connection().await {
         Ok(c) => c,
-        Err((_status, _json)) => {
-            println!("Failed connecting to redis! (get game)");
+        Err((status, json)) => {
+            println!("Failed connecting to redis! (get game): {}, {:?}", status, json);
             return None; //handle this properly
         },
     };
@@ -168,6 +170,7 @@ pub async fn get_game(game_id: u32) -> Option<Game> {
             }
         },
         board_state: game_data.get("board_state")?.parse().ok()?,
+        previous_move: serde_json::from_str(&game_data.get("previous_move")?).unwrap(),
     })
 }
 
@@ -191,6 +194,7 @@ pub async fn set_game(game: &Game) {
             ("game_initiated", game.game_initiated.to_string()), // Game initiated state stored as a string
             ("last_moved", format!("{} {}", game.last_moved.0, game.last_moved.1)), // last_moved stored as a string
             ("board_state", game.board_state.to_string()),
+            ("previous_move", serde_json::to_string(&game.previous_move).unwrap()),
         ]
     ).await.unwrap();
 }
@@ -244,15 +248,23 @@ pub async fn publish_update(game: &Game) {
     let _: () = con.publish(&channel_name, game_json).await.expect("failed publish of game state");
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRedisValue, ToRedisArgs)]
 pub struct Game {
     pub game_id: u32,
     pub player_white: u32,
-    pub player_white_ready: bool,
     pub player_black: u32,
-    pub player_black_ready: bool,
-    pub game_created: i64,
+    pub game_created: i64, //timestamp
     pub game_initiated: i64,
     pub last_moved: (u32, i64), // (user_id, timestamp)
     pub board_state: String,
+    pub previous_move: Option<Move>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRedisValue, ToRedisArgs)]
+pub struct Move {
+    pub from: String,
+    pub to: String,
+    pub flags: String,
+    pub captured: Option<String>,
+    pub promotion: Option<String>,
 }

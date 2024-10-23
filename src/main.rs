@@ -11,6 +11,8 @@ mod matchmaking;
 mod utils;
 mod authlayer;
 mod databaselayer;
+mod redislayer;
+mod gameserver;
 use authlayer::validate_jwt_sub;
 use websocket::websocket_handler;
 use matchmaking::{matchmaking_handler, bot_handler, matchmaking_status, match_maker};
