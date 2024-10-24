@@ -20,7 +20,7 @@ pub async fn websocket_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(handle_socket)
 }
 
-async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::Error>> { //also takes the token here
+async fn handle_socket(mut stream: WebSocket) { //also takes the token here
 
     let token: String = match listen_for_token(&mut stream).await {
         Some(token) => token,
@@ -30,7 +30,7 @@ async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::
             //note to self: when a game is created, players have N mins to join before the game expires
             let _ = stream.send(Message::Text(format!("Authentication failed"))).await;
             let _ = stream.close().await;
-            return Err("Auth failed".into());
+            return;
         }
     };
 
@@ -38,7 +38,7 @@ async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::
         Ok(id) => id,
         Err(e) => {
             info!("Failed to resolve userId from token: {}", e.1);
-            return Err("Failed to resolve userId".into());
+            return;
         }
     };
     info!("Authenticated user: {}", user_id);
@@ -51,14 +51,14 @@ async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::
         None => {
             let _ = stream.send(Message::Text(format!("User has no associated game"))).await;
             let _ = stream.close().await;
-            return Err("User has no associated game".into());
+            return;
         }
     };
     let game_id = match game_id.parse::<u32>() {
         Ok(game_id) => game_id,
         Err(e) => {
             info!("Error parsing game_id: {}", e);
-            return Err("Error parsing game_id".into());
+            return;
         }
     };
 
@@ -66,7 +66,7 @@ async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::
         Some(game) => game,
         None => {
             info!("Failed to get game");
-            return Err("failed to get game".into());
+            return;
         }
     };
 
@@ -74,28 +74,15 @@ async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::
 
     if let Err(e) = ready_up(game, user_id, &redis_layer).await {
         info!("Encountered Error waiting for game {} to start for user: {}: {}", game_id, user_id, e);
-        return Err("Encountered Error waiting for game to start".into());
+        return;
     }
 
-    //Spin 
+    //Spin up send / receive threads
     let (sender, receiver) = stream.split();
     let sender: Arc<Mutex<SplitSink<WebSocket, Message>>> = Arc::new(Mutex::new(sender));
-    let receiver = Arc::new(Mutex::new(receiver));
-    // let (tx, mut rx) = mpsc::channel(32);
-
-    // //task to relay any sent messages using the actual WebSocket sender to avoid problems with owning between threads
-    // //this is kind of hacky, but sender doesnt implement sync, so we cant use between threads even with Arc(Mutex())
-    // task::spawn(async move {
-    //     let sender = Arc::new(Mutex::new(sender));
-    //     while let Some(message) = rx.recv().await {
-    //         let mut sender_lock = sender.lock().await;
-    //         let _ = sender_lock.send(message).await;
-    //     }
-    // });
 
     task::spawn({
         let sender = sender.clone();
-        let receiver = receiver.clone();
         async move {
             message_receiver(receiver, sender, user_id, game_id).await;
         }
@@ -107,7 +94,6 @@ async fn handle_socket(mut stream: WebSocket) -> Result<(), Box<dyn std::error::
             gameserver::message_sender(sender, user_id, game_id).await;
         }
     });
-    Ok(())
 }
 
 async fn ready_up(game: Game, user_id: u32, redislayer: &redislayer::RedisLayer) -> Result<(), String> {
@@ -160,10 +146,10 @@ async fn listen_for_token(stream: &mut WebSocket) -> Option<String> {
     None
 }
 
-async fn message_receiver(receiver: Arc<tokio::sync::Mutex<SplitStream<WebSocket>>>, sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
+async fn message_receiver(mut receiver: SplitStream<WebSocket>, sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
     let gameserver = GameServer::new(game_id, user_id).await;
 
-    let mut receiver = receiver.lock().await;
+    // let mut receiver = stream.lock().await;
 
     while let Some(Ok(message)) = receiver.next().await {
         match message {

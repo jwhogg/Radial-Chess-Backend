@@ -4,7 +4,8 @@ use redis::Client;
 use redis::Connection;
 use redis::ToRedisArgs;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use dotenv::dotenv;
 use crate::databaselayer::Game;
 
@@ -31,35 +32,35 @@ impl RedisLayer {
 
     //redis set (key, value) command
     pub async fn set(&self, key: &str, value: &str) -> Result<(), redis::RedisError> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         con.set(key, value).await
     }
 
     //redis get (key, value) command
     pub async fn get(&self, key: &str) -> Result<String, redis::RedisError> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         con.get(key).await
     }
 
     pub async fn get_game(&self, game_id: u32) -> Option<Game> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         let game_string: String = con.hgetall(&format!("game:{}", game_id)).await.expect("Failed getting game");
         let game_json: Game = serde_json::from_str(&game_string).expect("failed deserialising game");
         Some(game_json)
     }
 
     pub async fn hget(&self, key: &str, field: &str) -> Option<String> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         con.hget(key, field).await.expect("Failed getting value")
     }
 
     pub async fn hset(&self, key: &str, field: &str, value: &str) -> Result<(), redis::RedisError> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         con.hset(key, field, value).await
     }
 
     pub async fn hset_multiple<T: ToRedisArgs + Send + Sync>(&self, key: &str, fields: &[(String, T)]) -> Result<(), redis::RedisError> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         for (field, value) in fields {
             con.hset(key, field, value).await?;
         }
@@ -67,7 +68,7 @@ impl RedisLayer {
     }
 
     pub async fn publish(&self, channel: &str, message: &str) -> Result<(), redis::RedisError> {
-        let mut con = self.connection.lock().unwrap();
+        let mut con = self.connection.lock().await;
         con.publish(channel, message).await
     }
 

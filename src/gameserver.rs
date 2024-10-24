@@ -163,6 +163,7 @@ fn handle_send_reminder() {
 
 pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
     let mut sender = sender.lock().await;
+    let _ = sender.send(Message::Text(("Testing from message sender".to_string())));
     // dotenv().ok();
     
     // let redis_url = env::var("REDIS_URL").unwrap();
