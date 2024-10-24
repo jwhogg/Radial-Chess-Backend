@@ -6,7 +6,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, task};
-use crate::{authlayer, databaselayer::{self, Game}, gameserver::{self, GameServer}, redislayer::{self, RedisLayer}, utils::decode_user_id};
+use crate::{authlayer, gameserver::{self, GameServer, Game}, redislayer::{self, RedisLayer}, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
 use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use log::info;
@@ -99,7 +99,7 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
 async fn ready_up(game: Game, user_id: u32, redislayer: &redislayer::RedisLayer) -> Result<(), String> {
     let channel = &format!("game_updates:{}",game.game_id);
     let ready_message = format!("ready:{}:{}", user_id, true); //ready=true
-    redislayer.publish(channel, &ready_message).await;
+    let _ = redislayer.publish(channel, &ready_message).await;
 
     let opponent_id = if game.player_white == user_id {game.player_black} else {game.player_white};
 

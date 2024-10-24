@@ -121,23 +121,4 @@ pub async fn create_game(player_1: u32, player_2: u32) {
     ()
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Game {
-    pub game_id: u32,
-    pub player_white: u32,
-    pub player_black: u32,
-    pub game_created: i64, //timestamp
-    pub game_initiated: i64,
-    pub last_moved: (u32, i64), // (user_id, timestamp)
-    pub board_state: String,
-    pub previous_move: Option<Move>,
-}
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Move {
-    pub from: String,
-    pub to: String,
-    pub flags: String,
-    pub captured: Option<String>,
-    pub promotion: Option<String>,
-}

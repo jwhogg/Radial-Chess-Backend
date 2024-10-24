@@ -7,7 +7,7 @@ use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use dotenv::dotenv;
-use crate::databaselayer::Game;
+use crate::gameserver::Game;
 
 #[derive(Clone)]
 pub struct RedisLayer {

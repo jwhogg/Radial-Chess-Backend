@@ -6,7 +6,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, task};
-use crate::{authlayer, databaselayer::{self, Game}, redislayer::RedisLayer, utils::decode_user_id};
+use crate::{authlayer, redislayer::RedisLayer, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
 use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use log::info;
@@ -84,12 +84,12 @@ impl GameServer {
     
         board.apply_move(bit_move);
     
-        let previous_move = databaselayer::Move {
+        let previous_move = Move {
             from: bit_move.get_src().to_string(),
             to: bit_move.get_dest().to_string(),
-            flags: data.flags.clone().unwrap(),
-            captured: if data.captured.is_some() {data.captured.clone()} else {None},
-            promotion: if data.promotion.is_some() {data.promotion.clone()} else {None},
+            flags: data.this_move.flags.clone(),
+            captured: if data.this_move.captured.is_some() {data.this_move.captured.clone()} else {None},
+            promotion: if data.this_move.promotion.is_some() {data.this_move.promotion.clone()} else {None},
         };
 
         let fields = vec![
@@ -103,7 +103,7 @@ impl GameServer {
             return;
         }
     
-        redis_layer.publish(&format!("game_updates:{}", game.game_id), &format!("move:new:{}", self.user_id)).await;
+        let _ = redis_layer.publish(&format!("game_updates:{}", game.game_id), &format!("move:new:{}", self.user_id)).await;
     
     }
 
@@ -111,9 +111,10 @@ impl GameServer {
 
 
 fn construct_bit_move(parsed_move: Arc<EventData>, board: &Board) -> Result<BitMove, String> {
+    let parsed_move = &parsed_move.this_move;
     let from = &parsed_move.from; //handle better
     let to = &parsed_move.to;
-    let flags: MoveFlag = match parsed_move.flags.as_deref().unwrap() { //handle unwrap better
+    let flags: MoveFlag = match parsed_move.flags.as_str() { //handle unwrap better
         "n" => MoveFlag::QuietMove,
         "c" => MoveFlag::Capture { ep_capture: false },
         "b" => MoveFlag::DoublePawnPush,
@@ -126,13 +127,10 @@ fn construct_bit_move(parsed_move: Arc<EventData>, board: &Board) -> Result<BitM
         "e" => MoveFlag::Capture { ep_capture: true },
         _ => MoveFlag::QuietMove,  // Fallback if no match
     };
-    if !(from.is_some() && to.is_some()) {
-        info!("Invalid Moves: {:?}, {:?}", from, to);
-        return Err("Invalid Move Data".to_string());
-    }
+
     let info: PreMoveInfo = PreMoveInfo {
-        src: SQ(square_to_index(from.as_deref().unwrap()).unwrap()),
-        dst: SQ(square_to_index(to.as_deref().unwrap()).unwrap()),
+        src: SQ(square_to_index(from).unwrap()),
+        dst: SQ(square_to_index(to).unwrap()),
         flags,
     };
     
@@ -162,35 +160,40 @@ fn handle_send_reminder() {
 }
 
 pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
-    let mut sender = sender.lock().await;
-    let _ = sender.send(Message::Text(("Testing from message sender".to_string())));
-    // dotenv().ok();
-    
-    // let redis_url = env::var("REDIS_URL").unwrap();
-    // let client = redis::Client::open(redis_url).unwrap();
-    // let mut con = client.get_connection().unwrap();
-    // let mut pubsub = con.as_pubsub();
-    // let channel_name = format!("game_updates:{}", game_id);
-    // pubsub.subscribe(channel_name).unwrap();
+    //TODO: add functionality for relaying additional types of message
+    let redislayer = RedisLayer::new().await;
+    let channel = &format!("game_updates:{}", game_id);
 
-    // loop {
-    //     let msg: redis::Msg = pubsub.get_message().unwrap(); //handle better
-    //     let payload: String = msg.get_payload().unwrap();
+    let mut c = redislayer.con_for_subscribe();
+    let mut sub = c.as_pubsub();
+    sub.subscribe(channel).expect("failed subscribing to channel");
 
-    //     let game: Game = serde_json::from_str(&payload).unwrap();
-    //     println!("Received game update: {:?}", game);
-    //     // let mut sender = sender.lock().await;
-    //     //send fen, to, from, flag, whose turn it is to client
-    //     // let message= EventMessage {
-    //     //     event: "game_update".to_string(),
-    //     //     data: EventData {
-    //     //         player: game.last_moved.0,
-    //     //         from: game.previous_move.from,
-    //     //     }
-    //     // };
-    // }
+    loop {
+        //expect messages to be "in:this:form", we want something like "move:new:{user_id}"
+        let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
+        let payload: String = msg.get_payload().expect("Failed to get payload");
+        let parts: Vec<&str> = payload.split(':').collect();
+        if parts.len() == 3
+            && parts[0] == "move"
+            && parts[1] == "new"
+            && parts[2].parse().unwrap_or(0) != user_id
+        {
+            let game = redislayer.get_game(game_id).await.expect("failed to get game");
+            let message = EventMessage {
+                event: "game_move".to_string(),
+                data: EventData {
+                    player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
+                    this_move: game.previous_move.unwrap(),
+                    status: EventStatus::UpdateNewMove,
+                }
+            };
 
+            let message = Message::Text(serde_json::to_string(&message).unwrap());
 
+            let mut sender = sender.lock().await;
+            let _ = sender.send(message);
+        }
+    }
 }
 
 fn piece_type_from_str(piece_str: &str) -> PieceType {
@@ -227,12 +230,29 @@ struct EventMessage {
 #[serde(rename_all = "camelCase")]
 struct EventData {
     player: PlayerColour,
-    from: Option<String>,
-    to: Option<String>,
-    flags: Option<String>,
-    captured: Option<String>, //give the captured piece here, these 2 are optionals, only if there is a promotion (need to know if its a capturing promotion and to what piece)
-    promotion: Option<String>,
+    this_move: Move, //cant use 'move' word as it is reserved
     status: EventStatus,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Game {
+    pub game_id: u32,
+    pub player_white: u32,
+    pub player_black: u32,
+    pub game_created: i64, //timestamp
+    pub game_initiated: i64,
+    pub last_moved: (u32, i64), // (user_id, timestamp)
+    pub board_state: String,
+    pub previous_move: Option<Move>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Move {
+    pub from: String,
+    pub to: String,
+    pub flags: String,
+    pub captured: Option<String>,
+    pub promotion: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
