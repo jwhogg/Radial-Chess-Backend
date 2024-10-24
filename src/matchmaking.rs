@@ -97,6 +97,8 @@ async fn create_game(player1: u32, player2: u32, redislayer: &RedisLayer) {
         Err(_) => return (), //handle this..
     };
 
+    info!("game id counter: {}", game_id);
+
     let now = Utc::now().timestamp();
 
     let game = Game {
@@ -113,11 +115,12 @@ async fn create_game(player1: u32, player2: u32, redislayer: &RedisLayer) {
     let _ = redislayer.hset_game(&game).await; //create game hashmap
 
     //these might need to be awaited so we dont make things in redis before others are available
-    let _ = redislayer.zadd("active_games", &game_id.to_string(), now as f64); //active game pool
+    let _ = redislayer.zadd("active_games", &game_id.to_string(), now as f64).await; //active game pool
 
     //user->game mapping
-    let _ = redislayer.hset(&format!("user:{}",player1), "game_id", &game_id.to_string());
-    let _ = redislayer.hset(&format!("user:{}",player2), "game_id", &game_id.to_string());
+    let res = redislayer.hset(&format!("user:{}",player1), "game_id", &game_id.to_string()).await;
+    info!("result: {:?}", res);
+    let _ = redislayer.hset(&format!("user:{}",player2), "game_id", &game_id.to_string()).await;
 
     info!("created game: {} for players: {}, {}", game_id, player1, player2);
 }

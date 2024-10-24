@@ -53,7 +53,7 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
             let _ = stream.close().await;
             return;
         }
-    };
+    }; // TODO: clean up old user id -> game id mappings on close
     let game_id = match game_id.parse::<u32>() {
         Ok(game_id) => game_id,
         Err(e) => {
@@ -61,6 +61,7 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
             return;
         }
     };
+    info!("game id: {}", game_id);
 
     let game: Game = match redis_layer.get_game(game_id).await {
         Some(game) => game,

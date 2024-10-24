@@ -1,3 +1,4 @@
+use log::info;
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
 use redis::Client;
@@ -85,19 +86,20 @@ impl RedisLayer {
         match game_data {
             Ok(data) => {
                 let game = Game {
-                    game_id: data.get("game_id")?.parse().ok()?,
-                    player_white: data.get("player_white")?.parse().ok()?,
-                    player_black: data.get("player_black")?.parse().ok()?,
-                    game_created: data.get("game_created")?.parse().ok()?,
-                    game_initiated: data.get("game_initiated")?.parse().ok()?,
+                    game_id: data.get("game_id")?.parse().ok().unwrap(),
+                    player_white: data.get("player_white").unwrap().parse().ok().unwrap(),
+                    player_black: data.get("player_black").unwrap().parse().ok().unwrap(),
+                    game_created: data.get("game_created").unwrap().parse().ok().unwrap(),
+                    game_initiated: data.get("game_initiated").unwrap().parse().ok().unwrap(),
                     last_moved: {
-                        let last_moved_str = data.get("last_moved")?;
-                        serde_json::from_str(last_moved_str).ok()?
+                        let last_moved_str = data.get("last_moved").unwrap();
+                        let last_moved_tuple: (u32, i64) = serde_json::from_str(last_moved_str).ok().unwrap();
+                        last_moved_tuple
                     },
-                    board_state: data.get("board_state")?.clone(),
+                    board_state: data.get("board_state").unwrap().clone(),
                     previous_move: {
-                        let previous_move_str = data.get("previous_move")?;
-                        serde_json::from_str(previous_move_str).ok()?
+                        let previous_move_str = data.get("previous_move").unwrap();
+                        serde_json::from_str(previous_move_str).ok().unwrap()
                     },
                 };
                 Some(game)
@@ -136,9 +138,9 @@ impl RedisLayer {
             ("player_black".to_string(), game.player_black.to_string()),
             ("game_created".to_string(), game.game_created.to_string()),
             ("game_initiated".to_string(), game.game_initiated.to_string()),
-            ("last_moved".to_string(), format!("{:?}", game.last_moved)), // Using Debug trait for tuple
+            ("last_moved".to_string(), serde_json::to_string(&game.last_moved).unwrap()), // Using Debug trait for tuple
             ("board_state".to_string(), game.board_state.clone()),
-            ("previous_move".to_string(), format!("{:?}", game.previous_move)), // Using Debug for Option
+            ("previous_move".to_string(), serde_json::to_string(&game.previous_move).unwrap()), // Using Debug for Option
         ];
     
         con.hset_multiple(&format!("game:{}", game.game_id), &fields).await
