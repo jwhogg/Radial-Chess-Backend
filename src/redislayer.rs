@@ -42,6 +42,33 @@ impl RedisLayer {
         con.get(key).await
     }
 
+    pub async fn zscore(&self, key: &str, member: &str) -> Result<Option<f64>, redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        con.zscore(key, member).await
+    }
+
+    pub async fn zadd(&self, key: &str, member: &str, score: f64) -> Result<(), redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        con.zadd(key, member, score).await
+    }
+
+    pub async fn zcard(&self, key: &str) -> Result<u64, redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        con.zcard(key).await
+    }
+
+    pub async fn zpopmin(&self, key: &str, count: isize) -> Result<Vec<(String, f64)>, redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        let result: Vec<(String, f64)>  = con.zpopmin(key, count).await?;
+        Ok(result)
+    }
+
+    pub async fn incr(&self, key: &str) -> Result<i64, redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        let result: i64 = con.incr(key, 1).await?;
+        Ok(result)
+    }
+
     pub async fn get_game(&self, game_id: u32) -> Option<Game> {
         let mut con = self.connection.lock().await;
         let game_string: String = con.hgetall(&format!("game:{}", game_id)).await.expect("Failed getting game");
@@ -65,6 +92,24 @@ impl RedisLayer {
             con.hset(key, field, value).await?;
         }
         Ok(())
+    }
+
+    //for creating a game (ie adding it to redis)
+    pub async fn hset_game(&self, game: &Game) -> Result<(), redis::RedisError> {
+        let mut con = self.connection.lock().await;
+    
+        let fields = vec![
+            ("game_id".to_string(), game.game_id.to_string()),
+            ("player_white".to_string(), game.player_white.to_string()),
+            ("player_black".to_string(), game.player_black.to_string()),
+            ("game_created".to_string(), game.game_created.to_string()),
+            ("game_initiated".to_string(), game.game_initiated.to_string()),
+            ("last_moved".to_string(), format!("{:?}", game.last_moved)), // Using Debug trait for tuple
+            ("board_state".to_string(), game.board_state.clone()),
+            ("previous_move".to_string(), format!("{:?}", game.previous_move)), // Using Debug for Option
+        ];
+    
+        con.hset_multiple(&format!("game:{}", game.game_id), &fields).await
     }
 
     pub async fn publish(&self, channel: &str, message: &str) -> Result<(), redis::RedisError> {

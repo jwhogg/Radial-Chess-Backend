@@ -1,21 +1,14 @@
 use axum::{http::StatusCode, response::{IntoResponse, Json}};
 use http::Request;
-use redis::AsyncCommands;
-use uuid::timestamp;
-use std::env;
-use chrono::{Utc};
+use log::info;
+use pleco::Board;
+use chrono::Utc;
 use serde_json::json;
-use dotenv::dotenv;
-use crate::authlayer;
-use crate::databaselayer::redis_connection;
-use crate::databaselayer::create_game;
+use crate::{authlayer, gameserver::Game, redislayer::RedisLayer};
 
 pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse {
     
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((status, json)) => return (status, json),
-    };
+    let redislayer = RedisLayer::new().await;
 
     let user_id = match authlayer::get_jwt_sub(&req).await {
         Ok(id) => id,
@@ -23,7 +16,7 @@ pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse
     };
 
     //logic to return early if user is already in matchmaking pool (otherwise they can spam the endpoint and skip the queue)
-    let score: Option<f64> = match con.zscore("matchmaking_pool", &user_id).await {
+    let score: Option<f64> = match redislayer.zscore("matchmaking_pool", &user_id.to_string()).await {
         Ok(score) => score,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
             "message": format!("encountered error fetching matchmaking pool from redis: {}", e)}))),
@@ -36,7 +29,7 @@ pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse
     //adding user to the pool
     let timestamp: i64 = Utc::now().timestamp();
 
-    match con.zadd("matchmaking_pool", user_id, timestamp as f64).await {
+    match redislayer.zadd("matchmaking_pool", &user_id.to_string(), timestamp as f64).await {
         Ok(()) => {
             return (StatusCode::OK, Json(json!({
                 "message": "User has been added to matchmaking pool successfully",
@@ -64,23 +57,14 @@ pub async fn matchmaking_status() {
 }
 
 pub async fn match_maker() {
-    //on loop:
-        //ZPOPMIN "matchmaking_pool" 2
-
-        //if both players are Some(), then remvoe from the pool (if BRPOP doesnt already do that?) and make a new game
-        //  - Add the game to the Active Games collection in redis
-    
-    let mut con = match redis_connection().await {
-        Ok(c) => c,
-        Err((status, json)) => return (),
-    };
+    let redislayer = RedisLayer::new().await;
 
     loop {
-        let player_count: i32 = con.zcard("matchmaking_pool").await.unwrap();
+        let player_count: i32 = redislayer.zcard("matchmaking_pool").await.unwrap().try_into().unwrap();
         if player_count < 2 {
             continue;
         }
-        let result: redis::RedisResult<Vec<(String, f64)>> = con.zpopmin("matchmaking_pool", 2).await;
+        let result: redis::RedisResult<Vec<(String, f64)>> = redislayer.zpopmin("matchmaking_pool", 2).await;
 
         match result {
             Ok(players) => {
@@ -94,7 +78,7 @@ pub async fn match_maker() {
                             println!("Popped User: {}, Score (timestamp): {}", user_id, score);
                         }
                         create_game(valid_players[0].0.parse().unwrap(),
-                        valid_players[1].0.parse().unwrap()).await;
+                        valid_players[1].0.parse().unwrap(), &redislayer).await;
                     }
                 }
             }
@@ -105,4 +89,35 @@ pub async fn match_maker() {
     }
         
 
+}
+
+async fn create_game(player1: u32, player2: u32, redislayer: &RedisLayer) {
+    let game_id: u32 = match redislayer.incr("game_id_counter").await {
+        Ok(id) => id.try_into().unwrap(),
+        Err(_) => return (), //handle this..
+    };
+
+    let now = Utc::now().timestamp();
+
+    let game = Game {
+        game_id: game_id,
+        player_white: player1,
+        player_black: player2,
+        game_created: now,
+        game_initiated: 0,
+        last_moved: (player2, now), //so white starts
+        board_state: Board::start_pos().fen().to_string(),
+        previous_move: None,
+    };
+
+    let _ = redislayer.hset_game(&game).await; //create game hashmap
+
+    //these might need to be awaited so we dont make things in redis before others are available
+    let _ = redislayer.zadd("active_games", &game_id.to_string(), now as f64); //active game pool
+
+    //user->game mapping
+    let _ = redislayer.hset(&format!("user:{}",player1), "game_id", &game_id.to_string());
+    let _ = redislayer.hset(&format!("user:{}",player2), "game_id", &game_id.to_string());
+
+    info!("created game: {} for players: {}, {}", game_id, player1, player2);
 }
