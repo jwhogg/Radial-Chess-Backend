@@ -72,13 +72,6 @@ impl RedisLayer {
         Ok(result)
     }
 
-    // pub async fn get_game(&self, game_id: u32) -> Option<Game> {
-    //     let mut con = self.connection.lock().await;
-    //     let game_string: String = con.hgetall(&format!("game:{}", game_id)).await.expect("Failed getting game");
-    //     let game_json: Game = serde_json::from_str(&game_string).expect("failed deserialising game");
-    //     Some(game_json)
-    // }
-
     pub async fn get_game(&self, game_id: u32) -> Option<Game> {
         let mut con = self.connection.lock().await;
         let game_data: RedisResult<HashMap<String, String>> = con.hgetall(&format!("game:{}", game_id)).await;

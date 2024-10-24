@@ -82,6 +82,8 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
     let (sender, receiver) = stream.split();
     let sender: Arc<Mutex<SplitSink<WebSocket, Message>>> = Arc::new(Mutex::new(sender));
 
+    info!("Spinning up send/receive for user: {}", user_id);
+
     task::spawn({
         let sender = sender.clone();
         async move {
@@ -98,26 +100,15 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
 }
 
 async fn ready_up(game: Game, user_id: u32, redislayer: &redislayer::RedisLayer) -> Result<(), String> {
-    let channel = &format!("game_updates:{}",game.game_id);
-    let ready_message = format!("ready:{}:{}", user_id, true); //ready=true
-    let _ = redislayer.publish(channel, &ready_message).await;
-
     let opponent_id = if game.player_white == user_id {game.player_black} else {game.player_white};
 
-    let mut c = redislayer.con_for_subscribe();
-    let mut sub = c.as_pubsub();
-    sub.subscribe(channel).expect("failed subscribing to channel");
+    let hset_result = redislayer.hset(&format!("game_readiness:{}", game.game_id), &user_id.to_string(), "ready").await;
+    info!("user {} is ready... {:?}", user_id, hset_result);
 
     loop {
-        //expect messages to be "in:this:form", we want something like "ready:8:true"
-        let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
-        let payload: String = msg.get_payload().expect("Failed to get payload");
-        let parts: Vec<&str> = payload.split(':').collect();
-        if parts.len() == 3
-            && parts[0] == "ready"
-            && parts[1].parse::<u32>().unwrap_or(0) == opponent_id 
-            && parts[2].parse().unwrap_or(false)
-        {
+        let result = redislayer.hget(&format!("game_readiness:{}", game.game_id), &opponent_id.to_string()).await;
+        if result.is_some() {
+            info!("opponent ready!");
             //initiate game
             let timestamp = Utc::now().timestamp().to_string();
 
