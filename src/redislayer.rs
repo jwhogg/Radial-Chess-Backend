@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use dotenv::dotenv;
 use crate::gameserver::Game;
+use redis::RedisResult;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct RedisLayer {
@@ -69,11 +71,41 @@ impl RedisLayer {
         Ok(result)
     }
 
+    // pub async fn get_game(&self, game_id: u32) -> Option<Game> {
+    //     let mut con = self.connection.lock().await;
+    //     let game_string: String = con.hgetall(&format!("game:{}", game_id)).await.expect("Failed getting game");
+    //     let game_json: Game = serde_json::from_str(&game_string).expect("failed deserialising game");
+    //     Some(game_json)
+    // }
+
     pub async fn get_game(&self, game_id: u32) -> Option<Game> {
         let mut con = self.connection.lock().await;
-        let game_string: String = con.hgetall(&format!("game:{}", game_id)).await.expect("Failed getting game");
-        let game_json: Game = serde_json::from_str(&game_string).expect("failed deserialising game");
-        Some(game_json)
+        let game_data: RedisResult<HashMap<String, String>> = con.hgetall(&format!("game:{}", game_id)).await;
+
+        match game_data {
+            Ok(data) => {
+                let game = Game {
+                    game_id: data.get("game_id")?.parse().ok()?,
+                    player_white: data.get("player_white")?.parse().ok()?,
+                    player_black: data.get("player_black")?.parse().ok()?,
+                    game_created: data.get("game_created")?.parse().ok()?,
+                    game_initiated: data.get("game_initiated")?.parse().ok()?,
+                    last_moved: {
+                        let last_moved_str = data.get("last_moved")?;
+                        serde_json::from_str(last_moved_str).ok()?
+                    },
+                    board_state: data.get("board_state")?.clone(),
+                    previous_move: {
+                        let previous_move_str = data.get("previous_move")?;
+                        serde_json::from_str(previous_move_str).ok()?
+                    },
+                };
+                Some(game)
+            },
+            Err(_) => {
+                None
+            }
+        }
     }
 
     pub async fn hget(&self, key: &str, field: &str) -> Option<String> {
