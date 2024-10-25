@@ -4,7 +4,7 @@ use log::info;
 use pleco::Board;
 use chrono::Utc;
 use serde_json::json;
-use crate::{authlayer, gameserver::Game, redislayer::RedisLayer};
+use crate::{authlayer, gameserver::Game, redislayer::{self, RedisLayer}};
 
 pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse {
     
@@ -48,12 +48,30 @@ pub async fn bot_handler() {
  // TODO
 }
 
-pub async fn matchmaking_status() {
-    //checks active game pool for user_id (maybe also task id, might not even need this)
+pub async fn matchmaking_status(req: Request<hyper::Body>) -> impl IntoResponse {
+    let user_id = match authlayer::user_id_from_request(&req).await {
+        Some(id) => id,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({"message": "Failed to find user from provided bearer token"})))
+    };
 
-    //if there is an active game, return 200 OK, user should switch to websocket
+    let redislayer = RedisLayer::new().await;
 
-    //if no game, return HTTP 102
+    let game_id = match redislayer.hget(&format!("user:{}", user_id), "game_id").await {  //check if there is a game in redis for that user id
+        Some(game_id) => game_id,
+        None => {
+            return (StatusCode::PROCESSING, Json(json!({"message": "User is waiting in the matchmaking pool..."})))
+        }
+    };
+
+    match game_id.parse::<u32>() { //see if game id can be succesfully parsed (to handle redis returning something like "[]")
+        Ok(game_id) => return (StatusCode::OK, Json(json!({
+            "message": format!("Found game: {} for user", game_id),
+            "instructions": "Open a websocket request to the server at /ws"
+        }))),
+        Err(e) => {
+            return (StatusCode::PROCESSING, Json(json!({"message": "User is waiting in the matchmaking pool..."})))
+        }
+    };
 }
 
 pub async fn match_maker() {

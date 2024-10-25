@@ -141,8 +141,6 @@ async fn listen_for_token(stream: &mut WebSocket) -> Option<String> {
 async fn message_receiver(mut receiver: SplitStream<WebSocket>, sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
     let gameserver = GameServer::new(game_id, user_id).await;
 
-    // let mut receiver = stream.lock().await;
-
     while let Some(Ok(message)) = receiver.next().await {
         match message {
             Message::Text(text) => {

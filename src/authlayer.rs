@@ -130,6 +130,15 @@ fn extract_bearer_token<B>(req: &Request<B>) -> Option<&str> {
         .strip_prefix("Bearer ")
 }
 
+pub async fn user_id_from_request<B>(req: &Request<B>) -> Option<u32> {
+    let token = extract_bearer_token(req);
+    if token.is_some() {
+        return get_user_id_from_token(token.unwrap()).await.ok();
+    } else {
+        return None;
+    }
+}
+
 //auth middleware
 pub async fn validate_jwt_sub<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
     match get_jwt_sub(&req).await {

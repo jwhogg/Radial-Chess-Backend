@@ -37,7 +37,7 @@ async fn main() {
         .route("/matchmaking", post(matchmaking_handler))
         .route("/bot", post(bot_handler))
         .route("/test", get(test_setup))
-        .route("/matchmaking", get(matchmaking_status))
+        .route("/matchmaking", get(matchmaking_status).layer(middleware::from_fn(validate_jwt_sub)))
         .layer(CorsLayer::very_permissive());
         // .route("/test", get(test_setup)).layer(CorsLayer::very_permissive()).layer(middleware::from_fn(validate_jwt_sub));
 
