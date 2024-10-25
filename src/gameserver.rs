@@ -1,10 +1,11 @@
 use std::{env, sync::Arc};
 use axum::{
-    extract::ws::{WebSocketUpgrade, Message, WebSocket},
-    response::IntoResponse,
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    response::IntoResponse, Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::{sync::Mutex, task};
 use crate::{authlayer, redislayer::RedisLayer, utils::decode_user_id};
 use crate::utils::user_id_to_game_id;
@@ -168,6 +169,16 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
     let mut sub = c.as_pubsub();
     sub.subscribe(channel).expect("failed subscribing to channel");
 
+    //send game_initated messge to client:
+    {   
+        info!("sending game_initiated message...");
+        let message = Message::Text(serde_json::to_string(&json!({
+            "event": "game_initiated"
+        })).unwrap());
+        let mut sender = sender.lock().await;
+        let _ = sender.send(message).await;
+    }
+
     loop {
         //expect messages to be "in:this:form", we want something like "move:new:{user_id}"
         let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
@@ -191,7 +202,7 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
             let message = Message::Text(serde_json::to_string(&message).unwrap());
 
             let mut sender = sender.lock().await;
-            let _ = sender.send(message);
+            let _ = sender.send(message).await;
         }
     }
 }

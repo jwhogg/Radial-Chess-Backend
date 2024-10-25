@@ -49,6 +49,7 @@ pub async fn bot_handler() {
 }
 
 pub async fn matchmaking_status(req: Request<hyper::Body>) -> impl IntoResponse {
+    info!("get /matchmaking hit!");
     let user_id = match authlayer::user_id_from_request(&req).await {
         Some(id) => id,
         None => return (StatusCode::BAD_REQUEST, Json(json!({"message": "Failed to find user from provided bearer token"})))
