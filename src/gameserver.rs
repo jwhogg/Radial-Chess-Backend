@@ -37,6 +37,7 @@ impl GameServer {
     }
 
     pub async fn handle_received_message(&self, msg: String) {
+        info!("message from client {}", msg);
         let parsed_message: EventMessage = match serde_json::from_str(&msg) {
             Ok(m) => m,
             Err(e) => {
@@ -169,11 +170,15 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
     let mut sub = c.as_pubsub();
     sub.subscribe(channel).expect("failed subscribing to channel");
 
+    let game = redislayer.get_game(game_id).await.expect("failed to get game");
+    let player_colour = if game.player_white == user_id {"white"} else {"black"};
+
     //send game_initated messge to client:
     {   
         info!("sending game_initiated message...");
         let message = Message::Text(serde_json::to_string(&json!({
-            "event": "game_initiated"
+            "event": "game_initiated",
+            "playercolour": player_colour
         })).unwrap());
         let mut sender = sender.lock().await;
         let _ = sender.send(message).await;
@@ -278,4 +283,5 @@ enum EventStatus {
     EchoFailure, //after the client makes a move, and the server INVALIDATES it, send the unchanged game state back with this status
     UpdateNewMove, //after the opponent makes a move, (which has been validated), send the new game state back with this status
     Reminder, //if the client asks to be re-sent the game state, send it along with this status
+    ClientMessage,
 }

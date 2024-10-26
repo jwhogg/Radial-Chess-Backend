@@ -1,5 +1,6 @@
-use axum::{http::StatusCode, response::{IntoResponse, Json}};
-use http::Request;
+use axum::{http::StatusCode, response::{IntoResponse, Json, Response}};
+use http::{header, Request};
+use hyper::Body;
 use log::info;
 use pleco::Board;
 use chrono::Utc;
@@ -7,41 +8,57 @@ use serde_json::json;
 use crate::{authlayer, gameserver::Game, redislayer::{self, RedisLayer}};
 
 pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse {
-    
+    info!("post /matchmaking hit!");
     let redislayer = RedisLayer::new().await;
 
     let user_id = match authlayer::get_jwt_sub(&req).await {
         Ok(id) => id,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"message": format!("encountered error: {}", e.1)}))),
+        Err(e) => {
+            return cors_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"message": format!("encountered error: {}", e.1)}),
+            );
+        }
     };
 
-    //logic to return early if user is already in matchmaking pool (otherwise they can spam the endpoint and skip the queue)
+    // Logic to return early if user is already in matchmaking pool
     let score: Option<f64> = match redislayer.zscore("matchmaking_pool", &user_id.to_string()).await {
         Ok(score) => score,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "message": format!("encountered error fetching matchmaking pool from redis: {}", e)}))),
+        Err(e) => {
+            return cors_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"message": format!("encountered error fetching matchmaking pool from redis: {}", e)}),
+            );
+        }
     };
 
     if score.is_some() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"message": format!("User already in matchmaking pool")})));
+        return cors_response(
+            StatusCode::BAD_REQUEST,
+            json!({"message": "User already in matchmaking pool"}),
+        );
     }
 
-    //adding user to the pool
+    // Adding user to the pool
     let timestamp: i64 = Utc::now().timestamp();
-
     match redislayer.zadd("matchmaking_pool", &user_id.to_string(), timestamp as f64).await {
         Ok(()) => {
-            return (StatusCode::OK, Json(json!({
-                "message": "User has been added to matchmaking pool successfully",
-                "instructions": "Query GET /matchmaking for an update on matchmaking status",
-            })));
+            return cors_response(
+                StatusCode::OK,
+                json!({
+                    "message": "User has been added to matchmaking pool successfully",
+                    "instructions": "Query GET /matchmaking for an update on matchmaking status",
+                }),
+            );
         }
         Err(e) => {
             eprintln!("Error adding to Redis ZSET: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"message": "Failed to add to Redis matchmaking pool"})))
+            return cors_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"message": "Failed to add to Redis matchmaking pool"}),
+            );
         }
     }
-
 }
 
 pub async fn bot_handler() {
@@ -49,7 +66,6 @@ pub async fn bot_handler() {
 }
 
 pub async fn matchmaking_status(req: Request<hyper::Body>) -> impl IntoResponse {
-    info!("get /matchmaking hit!");
     let user_id = match authlayer::user_id_from_request(&req).await {
         Some(id) => id,
         None => return (StatusCode::BAD_REQUEST, Json(json!({"message": "Failed to find user from provided bearer token"})))
@@ -142,4 +158,16 @@ async fn create_game(player1: u32, player2: u32, redislayer: &RedisLayer) {
     let _ = redislayer.hset(&format!("user:{}",player2), "game_id", &game_id.to_string()).await;
 
     info!("created game: {} for players: {}, {}", game_id, player1, player2);
+}
+
+fn cors_response(status: StatusCode, body: serde_json::Value) -> Response<Body> {
+    let json_body = body.to_string();
+    Response::builder()
+        .status(status)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Allow requests from any origin
+        .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
+        .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
+        .header(header::CONTENT_TYPE, "application/json") // Set Content-Type to JSON
+        .body(Body::from(json_body))
+        .unwrap() // Or handle error more gracefully
 }
