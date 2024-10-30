@@ -41,7 +41,7 @@ impl GameServer {
         let parsed_message: EventMessage = match serde_json::from_str(&msg) {
             Ok(m) => m,
             Err(e) => {
-                info!("Failed to parse JSON");
+                info!("Failed to parse JSON: {}", e);
                 return;
             },
         };
@@ -58,6 +58,7 @@ impl GameServer {
     }
 
     async fn handle_move(&self, data: EventData) {
+        info!("hit game move!");
         let redis_layer = self.redis_layer.lock().await;
         let game = match redis_layer.get_game(self.game_id).await {
             Some(game) => game,
@@ -85,7 +86,7 @@ impl GameServer {
         };
     
         board.apply_move(bit_move);
-    
+        info!("applied move!");
         let previous_move = Move {
             from: bit_move.get_src().to_string(),
             to: bit_move.get_dest().to_string(),
@@ -104,7 +105,7 @@ impl GameServer {
             info!("Error setting game info: {}", e);
             return;
         }
-    
+        info!("publishing move!");
         let _ = redis_layer.publish(&format!("game_updates:{}", game.game_id), &format!("move:new:{}", self.user_id)).await;
     
     }
@@ -175,7 +176,7 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
 
     //send game_initated messge to client:
     {   
-        info!("sending game_initiated message...");
+        // info!("sending game_initiated message...");
         let message = Message::Text(serde_json::to_string(&json!({
             "event": "game_initiated",
             "playercolour": player_colour
@@ -188,6 +189,7 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
         //expect messages to be "in:this:form", we want something like "move:new:{user_id}"
         let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
         let payload: String = msg.get_payload().expect("Failed to get payload");
+        info!("subscribed received message {}", payload);
         let parts: Vec<&str> = payload.split(':').collect();
         if parts.len() == 3
             && parts[0] == "move"
@@ -205,7 +207,7 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
             };
 
             let message = Message::Text(serde_json::to_string(&message).unwrap());
-
+            info!("sending message to client from subscriber...");
             let mut sender = sender.lock().await;
             let _ = sender.send(message).await;
         }
@@ -263,6 +265,7 @@ pub struct Game {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Move {
     pub from: String,
     pub to: String,
@@ -272,12 +275,14 @@ pub struct Move {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 enum PlayerColour {
     White,
     Black,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "PascalCase")] // Matches PascalCase used in the JSON
 enum EventStatus {
     EchoSuccess, //after the client makes a move, and the server validates it, send the new game state back with this status
     EchoFailure, //after the client makes a move, and the server INVALIDATES it, send the unchanged game state back with this status

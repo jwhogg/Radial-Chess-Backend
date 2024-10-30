@@ -1,5 +1,5 @@
 use axum::{http::StatusCode, response::{IntoResponse, Json, Response}};
-use http::{header, Request};
+use http::{header, Method, Request};
 use hyper::Body;
 use log::info;
 use pleco::Board;
@@ -9,6 +9,11 @@ use crate::{authlayer, gameserver::Game, redislayer::{self, RedisLayer}};
 
 pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse {
     info!("post /matchmaking hit!");
+
+    if req.method() == Method::OPTIONS { //respond to preflight request
+        return cors_response(StatusCode::OK, json!({"message": "Preflight request OK"}));
+    }
+
     let redislayer = RedisLayer::new().await;
 
     let user_id = match authlayer::get_jwt_sub(&req).await {
@@ -164,7 +169,7 @@ fn cors_response(status: StatusCode, body: serde_json::Value) -> Response<Body> 
     let json_body = body.to_string();
     Response::builder()
         .status(status)
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Allow requests from any origin
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:4040") // Allow requests from any origin
         .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
         .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
         .header(header::CONTENT_TYPE, "application/json") // Set Content-Type to JSON

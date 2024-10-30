@@ -2,7 +2,7 @@ use axum::{
     middleware, routing::{get, post}, Router
 };
 use tokio::task;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 use hyper::Method;
 use http::HeaderName;
 
@@ -32,13 +32,18 @@ async fn main() {
         match_maker().await;
     });
 
+    let cors = CorsLayer::new()
+    .allow_origin(Any)          // Allow any origin
+    .allow_methods([Method::GET, Method::POST, Method::OPTIONS]) // Allow GET, POST, OPTIONS methods
+    .allow_headers(Any);         // Allow any headers
+
     let app = Router::new()
         .route("/ws", get(websocket_handler))
         .route("/matchmaking", post(matchmaking_handler))
         .route("/bot", post(bot_handler))
         .route("/test", get(test_setup))
         .route("/matchmaking", get(matchmaking_status).layer(middleware::from_fn(validate_jwt_sub)))
-        .layer(CorsLayer::very_permissive());
+        .layer(cors);
         // .route("/test", get(test_setup)).layer(CorsLayer::very_permissive()).layer(middleware::from_fn(validate_jwt_sub));
 
 

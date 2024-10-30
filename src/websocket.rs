@@ -142,7 +142,6 @@ async fn message_receiver(mut receiver: SplitStream<WebSocket>, sender: Arc<Mute
     let gameserver = GameServer::new(game_id, user_id).await;
 
     while let Some(Ok(message)) = receiver.next().await {
-        info!("{:?}",message);
         match message {
             Message::Text(text) => {
                 gameserver.handle_received_message(text).await;
