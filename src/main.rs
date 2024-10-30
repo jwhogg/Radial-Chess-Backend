@@ -1,5 +1,5 @@
 use axum::{
-    middleware, routing::{get, post}, Router
+    middleware, routing::{get, post, options}, Router
 };
 use tokio::task;
 use tower_http::cors::{Any, CorsLayer};
@@ -15,7 +15,7 @@ mod redislayer;
 mod gameserver;
 use authlayer::validate_jwt_sub;
 use websocket::websocket_handler;
-use matchmaking::{matchmaking_handler, bot_handler, matchmaking_status, match_maker};
+use matchmaking::{bot_handler, match_maker, matchmaking_handler, matchmaking_options, matchmaking_status};
 
 mod testing;
 use testing::test_setup;
@@ -32,18 +32,19 @@ async fn main() {
         match_maker().await;
     });
 
-    let cors = CorsLayer::new()
-    .allow_origin(Any)          // Allow any origin
-    .allow_methods([Method::GET, Method::POST, Method::OPTIONS]) // Allow GET, POST, OPTIONS methods
-    .allow_headers(Any);         // Allow any headers
+    // let cors = CorsLayer::new()
+    // .allow_origin(Any)          // Allow any origin
+    // .allow_methods([Method::GET, Method::POST, Method::OPTIONS]) // Allow GET, POST, OPTIONS methods
+    // .allow_headers(Any);         // Allow any headers
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
         .route("/matchmaking", post(matchmaking_handler))
+        .route("/matchmaking", options(matchmaking_options))
         .route("/bot", post(bot_handler))
         .route("/test", get(test_setup))
-        .route("/matchmaking", get(matchmaking_status).layer(middleware::from_fn(validate_jwt_sub)))
-        .layer(cors);
+        .route("/matchmaking", get(matchmaking_status).layer(middleware::from_fn(validate_jwt_sub)));
+        // .layer(cors);
         // .route("/test", get(test_setup)).layer(CorsLayer::very_permissive()).layer(middleware::from_fn(validate_jwt_sub));
 
 

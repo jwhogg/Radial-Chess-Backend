@@ -7,12 +7,17 @@ use chrono::Utc;
 use serde_json::json;
 use crate::{authlayer, gameserver::Game, redislayer::{self, RedisLayer}};
 
+pub async fn matchmaking_options(req: Request<hyper::Body>) -> impl IntoResponse {
+    if req.method() == Method::OPTIONS { //respond to preflight request
+        info!("OPTIONS responding to preflight check!");
+        return cors_response(StatusCode::OK, json!({"message": "Preflight request OK"}));
+    } else {
+        return cors_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"message": "Request method is not OPTIONS!"}))
+    }
+}
+
 pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse {
     info!("post /matchmaking hit!");
-
-    if req.method() == Method::OPTIONS { //respond to preflight request
-        return cors_response(StatusCode::OK, json!({"message": "Preflight request OK"}));
-    }
 
     let redislayer = RedisLayer::new().await;
 
@@ -71,9 +76,11 @@ pub async fn bot_handler() {
 }
 
 pub async fn matchmaking_status(req: Request<hyper::Body>) -> impl IntoResponse {
+    info!("GET matchmaking status hit!");
+
     let user_id = match authlayer::user_id_from_request(&req).await {
         Some(id) => id,
-        None => return (StatusCode::BAD_REQUEST, Json(json!({"message": "Failed to find user from provided bearer token"})))
+        None => return cors_response(StatusCode::BAD_REQUEST, json!({"message": "Failed to find user from provided bearer token"})),
     };
 
     let redislayer = RedisLayer::new().await;
@@ -81,17 +88,18 @@ pub async fn matchmaking_status(req: Request<hyper::Body>) -> impl IntoResponse 
     let game_id = match redislayer.hget(&format!("user:{}", user_id), "game_id").await {  //check if there is a game in redis for that user id
         Some(game_id) => game_id,
         None => {
-            return (StatusCode::PROCESSING, Json(json!({"message": "User is waiting in the matchmaking pool..."})))
+            // accepted 202 means response is still processing
+            return cors_response(StatusCode::ACCEPTED, json!({"message": "User is waiting in the matchmaking pool..."}));
         }
     };
 
     match game_id.parse::<u32>() { //see if game id can be succesfully parsed (to handle redis returning something like "[]")
-        Ok(game_id) => return (StatusCode::OK, Json(json!({
+        Ok(game_id) => return cors_response(StatusCode::OK, json!({
             "message": format!("Found game: {} for user", game_id),
             "instructions": "Open a websocket request to the server at /ws"
-        }))),
-        Err(e) => {
-            return (StatusCode::PROCESSING, Json(json!({"message": "User is waiting in the matchmaking pool..."})))
+        })),
+        Err(e) => { //use the e here
+            return cors_response(StatusCode::ACCEPTED, json!({"message": "User is waiting in the matchmaking pool..."}));
         }
     };
 }
@@ -169,7 +177,7 @@ fn cors_response(status: StatusCode, body: serde_json::Value) -> Response<Body> 
     let json_body = body.to_string();
     Response::builder()
         .status(status)
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:4040") // Allow requests from any origin
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Allow requests from any origin
         .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
         .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
         .header(header::CONTENT_TYPE, "application/json") // Set Content-Type to JSON
