@@ -6,6 +6,7 @@
 
 A scalable, lightweight, and secure chess app with online matchmaking—written in Rust.
 
+## Demo
 <img width="30%" alt="Demo of a game" src="https://github.com/user-attachments/assets/65dc3ed1-da70-4d31-a273-349de6703df2">
 
 ## Table of Contents
