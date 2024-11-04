@@ -47,6 +47,11 @@ impl RedisLayer {
         con.get(key).await
     }
 
+    pub async fn del(&self, key: &str) -> Result<String, redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        con.del(key).await
+    }
+
     pub async fn zscore(&self, key: &str, member: &str) -> Result<Option<f64>, redis::RedisError> {
         let mut con = self.connection.lock().await;
         con.zscore(key, member).await
@@ -56,6 +61,11 @@ impl RedisLayer {
         let mut con = self.connection.lock().await;
         con.zadd(key, member, score).await
     }
+
+    pub async fn zrem(&self, key: &str, member: &str) -> Result<(), redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        con.zrem(key, member).await
+    }    
 
     pub async fn zcard(&self, key: &str) -> Result<u64, redis::RedisError> {
         let mut con = self.connection.lock().await;

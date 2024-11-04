@@ -49,7 +49,7 @@ impl GameServer {
     
         match parsed_message.event.as_str() {
             "game_move" => self.handle_move(parsed_message.data).await,
-            "game_surrender" => self.handle_surrender(),
+            "game_surrender" => self.handle_surrender().await,
             "game_offer_draw" => handle_offer_draw(),
             "game_accept_draw" => handle_accept_draw(),
             "game_decline_draw" => handle_decline_draw(),
@@ -87,13 +87,16 @@ impl GameServer {
         };
     
         board.apply_move(bit_move);
+
+        let this_move = data.this_move.clone().expect("Failed to unwrap Move from Option!");
+
         info!("applied move!");
         let previous_move = Move {
             from: bit_move.get_src().to_string(),
             to: bit_move.get_dest().to_string(),
-            flags: data.this_move.flags.clone(),
-            captured: if data.this_move.captured.is_some() {data.this_move.captured.clone()} else {None},
-            promotion: if data.this_move.promotion.is_some() {data.this_move.promotion.clone()} else {None},
+            flags: this_move.flags.clone(),
+            captured: if this_move.captured.is_some() {this_move.captured.clone()} else {None},
+            promotion: if this_move.promotion.is_some() {this_move.promotion.clone()} else {None},
         };
 
         let fields = vec![
@@ -111,15 +114,31 @@ impl GameServer {
     
     }
 
-    fn handle_surrender(&self) {
-        //
+    async fn handle_surrender(&self) {
+        let redis_layer = RedisLayer::new().await;
+        let game = redis_layer.get_game(self.game_id).await.expect("failed to get game");
+
+        let rem_result = redis_layer.zrem("active_games", &self.game_id.to_string()).await;
+        match rem_result {
+            Ok(_) => info!("removed game from active game pool!"),
+            Err(e) => info!("Failed to remove game from active games!, {}", e)
+        }
+
+        let _ = redis_layer.del(&format!("user:{}",self.user_id)).await;
+        let _ = redis_layer.del(&format!("user:{}",if game.player_black == self.user_id {game.player_white} else {game.player_black})).await;
+
+        let _ = redis_layer.publish(&format!("game_updates:{}", game.game_id), &format!("player:surrender:{}", self.user_id)).await;
+        //zrem game from "active_games" X
+        //remove user -> game mapping X
+        //publish player:surrender:{user_id} on game_updates:{game_id} X
+        //close connection (client will need to close connection once they have received the game finish / surrender message) TODO
     }
 
 }
 
 
 fn construct_bit_move(parsed_move: Arc<EventData>, board: &Board) -> Result<BitMove, String> {
-    let parsed_move = &parsed_move.this_move;
+    let parsed_move = &parsed_move.this_move.clone().unwrap();
     let from = &parsed_move.from; //handle better
     let to = &parsed_move.to;
     let flags: MoveFlag = match parsed_move.flags.as_str() { //handle unwrap better
@@ -153,7 +172,6 @@ fn construct_bit_move(parsed_move: Arc<EventData>, board: &Board) -> Result<BitM
 }
 
 
-
 fn handle_offer_draw() {
 }
 
@@ -171,19 +189,14 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
     let redislayer = RedisLayer::new().await;
     let channel = &format!("game_updates:{}", game_id);
 
-    // let mut c = redislayer.con_for_subscribe();
-    // let mut sub = c.as_pubsub();
-    // sub.subscribe(channel).expect("failed subscribing to channel");
-
     let pubsub = redislayer.get_pubsub().await;
     let mut pubsub_stream = pubsub.subscribe(channel).await.unwrap();
-
-    let game = redislayer.get_game(game_id).await.expect("failed to get game");
-    let player_colour = if game.player_white == user_id {"white"} else {"black"};
 
     //send game_initated messge to client:
     {   
         info!("sending game_initiated message...");
+        let game = redislayer.get_game(game_id).await.expect("failed to get game");
+        let player_colour = if game.player_white == user_id {"white"} else {"black"};
         let message = Message::Text(serde_json::to_string(&json!({
             "event": "game_initiated",
             "playercolour": player_colour
@@ -198,7 +211,6 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
         drop(sender);
     }
 
-
     while let Some(msg) = pubsub_stream.next().await {
         match msg {
             Ok(msg) => {
@@ -207,39 +219,73 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
 
                 let mut event_status = EventStatus::EchoFailure;
                 let parts: Vec<&str> = payload.split(':').collect();
-                if parts.len() == 3
-                    && parts[0] == "move"
-                    && parts[1] == "new"
-                {
-                    if parts[2].parse().unwrap_or(0) != user_id {
-                        event_status = EventStatus::UpdateNewMove;
-                    } else if parts[2].parse().unwrap_or(0) == user_id {
-                        event_status = EventStatus::EchoSuccess;
-                    }
+
+                if parts.len() != 3 {
+                    eprintln!("failed to parse subscribed message!");
+                    continue
                 }
 
                 let game = redislayer.get_game(game_id).await.expect("failed to get game");
 
-                let message = EventMessage {
-                    event: "game_move".to_string(),
-                    data: EventData {
-                        player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
-                        this_move: game.previous_move.unwrap(),
-                        status: event_status,
+                let message: EventMessage;
+
+                if parts[0] == "move" && parts[1] == "new" {
+                    //if the player moving isnt us, send the move to the cleint
+                    if parts[2].parse().unwrap_or(0) != user_id {
+                        event_status = EventStatus::UpdateNewMove;
+                    } else {
+                        event_status = EventStatus::EchoSuccess;
                     }
-                };
+
+                    message = format_game_move(game, user_id, event_status);
+
+                } else if parts[0] == "player" && parts[1] == "surrender" {
+                    if parts[2].parse().unwrap_or(0) != user_id {
+                        event_status = EventStatus::OpponentSurrender;
+                    } else {
+                        event_status = EventStatus::ConfirmSurrendered;
+                    }
+
+                    message = format_surrender(user_id, game, event_status);
+                } else {
+                    info!("failed to parse published message!");
+                    continue;
+                }
+
                 let message = Message::Text(serde_json::to_string(&message).unwrap());
                 let mut sender = sender.lock().await;
                 let send_status = sender.send(message).await;
                 match send_status {
-                    Ok(status) => info!("Message sent to user {}: {:?}", user_id, status),
-                    Err(e) => info!("encountered error when sending to user {}: {:?}", user_id, e),
+                    Ok(_) => {},
+                    Err(e) => eprint!("Error sending message to user {} from subscriber! {}", user_id, e)
                 }
 
             },
             Err(e) => eprintln!("Error!: {}", e)
         }
     }
+}
+
+fn format_game_move(game: Game, user_id: u32, event_status: EventStatus) -> EventMessage{
+    EventMessage {
+        event: "game_move".to_string(),
+        data: EventData {
+            player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
+            this_move: Some(game.previous_move.unwrap()),
+            status: event_status,
+        }
+    }
+}
+
+fn format_surrender(user_id: u32, game: Game, event_status: EventStatus) -> EventMessage {
+    EventMessage {
+        event: "game_surrender".to_string(),
+        data: EventData {
+            player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
+            this_move: None,
+            status: event_status,
+        }
+    }   
 }
 
 fn piece_type_from_str(piece_str: &str) -> PieceType {
@@ -276,7 +322,7 @@ struct EventMessage {
 #[serde(rename_all = "camelCase")]
 struct EventData {
     player: PlayerColour,
-    this_move: Move, //cant use 'move' word as it is reserved
+    this_move: Option<Move>, //cant use 'move' word as it is reserved
     status: EventStatus,
 }
 
@@ -315,6 +361,8 @@ enum EventStatus {
     EchoSuccess, //after the client makes a move, and the server validates it, send the new game state back with this status
     EchoFailure, //after the client makes a move, and the server INVALIDATES it, send the unchanged game state back with this status
     UpdateNewMove, //after the opponent makes a move, (which has been validated), send the new game state back with this status
+    ConfirmSurrendered,
+    OpponentSurrender,
     Reminder, //if the client asks to be re-sent the game state, send it along with this status
     ClientMessage,
 }
