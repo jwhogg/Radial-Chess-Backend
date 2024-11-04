@@ -4,6 +4,7 @@ use axum::{
     response::IntoResponse, Json,
 };
 use chrono::Utc;
+use redis_async::{client::pubsub, resp::FromResp};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{sync::Mutex, task};
@@ -167,51 +168,114 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
     let redislayer = RedisLayer::new().await;
     let channel = &format!("game_updates:{}", game_id);
 
-    let mut c = redislayer.con_for_subscribe();
-    let mut sub = c.as_pubsub();
-    sub.subscribe(channel).expect("failed subscribing to channel");
+    // let mut c = redislayer.con_for_subscribe();
+    // let mut sub = c.as_pubsub();
+    // sub.subscribe(channel).expect("failed subscribing to channel");
+
+    let pubsub = redislayer.get_pubsub().await;
+    let mut pubsub_stream = pubsub.subscribe(channel).await.unwrap();
 
     let game = redislayer.get_game(game_id).await.expect("failed to get game");
     let player_colour = if game.player_white == user_id {"white"} else {"black"};
 
     //send game_initated messge to client:
     {   
-        // info!("sending game_initiated message...");
+        info!("sending game_initiated message...");
         let message = Message::Text(serde_json::to_string(&json!({
             "event": "game_initiated",
             "playercolour": player_colour
         })).unwrap());
         let mut sender = sender.lock().await;
-        let _ = sender.send(message).await;
+        // info!("lock received for sending game_initiated");
+        let send_result = sender.send(message).await;
+        match send_result {
+            Ok(status) => info!("ok sending game initiated: {:?}", status),
+            Err(e) => info!("error sending game initiated: {:?}", e),
+        }
+        drop(sender);
     }
 
-    loop {
-        //expect messages to be "in:this:form", we want something like "move:new:{user_id}"
-        let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
-        let payload: String = msg.get_payload().expect("Failed to get payload");
-        info!("subscribed received message {}", payload);
-        let parts: Vec<&str> = payload.split(':').collect();
-        if parts.len() == 3
-            && parts[0] == "move"
-            && parts[1] == "new"
-            && parts[2].parse().unwrap_or(0) != user_id
-        {
-            let game = redislayer.get_game(game_id).await.expect("failed to get game");
-            let message = EventMessage {
-                event: "game_move".to_string(),
-                data: EventData {
-                    player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
-                    this_move: game.previous_move.unwrap(),
-                    status: EventStatus::UpdateNewMove,
-                }
-            };
 
-            let message = Message::Text(serde_json::to_string(&message).unwrap());
-            info!("sending message to client from subscriber...");
-            let mut sender = sender.lock().await;
-            let _ = sender.send(message).await;
+    while let Some(msg) = pubsub_stream.next().await {
+        match msg {
+            Ok(msg) => {
+                let payload = String::from_resp(msg).unwrap();
+                info!("subscriber got: {} for user {}", payload, user_id);
+
+                let mut event_status = EventStatus::EchoFailure;
+                let parts: Vec<&str> = payload.split(':').collect();
+                if parts.len() == 3
+                    && parts[0] == "move"
+                    && parts[1] == "new"
+                {
+                    if parts[2].parse().unwrap_or(0) != user_id {
+                        event_status = EventStatus::UpdateNewMove;
+                    } else if parts[2].parse().unwrap_or(0) == user_id {
+                        event_status = EventStatus::EchoSuccess;
+                    }
+                }
+
+                let game = redislayer.get_game(game_id).await.expect("failed to get game");
+
+                let message = EventMessage {
+                    event: "game_move".to_string(),
+                    data: EventData {
+                        player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
+                        this_move: game.previous_move.unwrap(),
+                        status: event_status,
+                    }
+                };
+                let message = Message::Text(serde_json::to_string(&message).unwrap());
+                let mut sender = sender.lock().await;
+                let send_status = sender.send(message).await;
+                match send_status {
+                    Ok(status) => info!("Message sent to user {}: {:?}", user_id, status),
+                    Err(e) => info!("encountered error when sending to user {}: {:?}", user_id, e),
+                }
+
+            },
+            Err(e) => eprintln!("Error!: {}", e)
         }
     }
+
+    // loop {
+    //     //expect messages to be "in:this:form", we want something like "move:new:{user_id}"
+    //     let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
+    //     let payload: String = msg.get_payload().expect("Failed to get payload");
+    //     info!("subscribed received message {} for user: {}", payload, user_id);
+    //     let mut event_status = EventStatus::EchoFailure;
+    //     let parts: Vec<&str> = payload.split(':').collect();
+    //     if parts.len() == 3
+    //         && parts[0] == "move"
+    //         && parts[1] == "new"
+    //     {
+    //         if parts[2].parse().unwrap_or(0) != user_id {
+    //             event_status = EventStatus::UpdateNewMove;
+    //         } else if parts[2].parse().unwrap_or(0) == user_id {
+    //             event_status = EventStatus::EchoSuccess;
+    //         }
+    //     }
+
+    //     let game = redislayer.get_game(game_id).await.expect("failed to get game");
+    //     let message = EventMessage {
+    //         event: "game_move".to_string(),
+    //         data: EventData {
+    //             player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
+    //             this_move: game.previous_move.unwrap(),
+    //             status: event_status,
+    //         }
+    //     };
+    //     info!("going to send message to user: {}, : {:?}", user_id, message);
+    //     let message = Message::Text(serde_json::to_string(&message).unwrap());
+    //     info!("sending message to client: {} from subscriber...", user_id);
+    //     let mut sender = sender.lock().await;
+    //     info!("lock received for thread for user: {}", user_id);
+    //     let send_status = sender.send(message).await;
+    //     match send_status {
+    //         Ok(status) => info!("Message sent to user {}: {:?}", user_id, status),
+    //         Err(e) => info!("encountered error when sending to user {}: {:?}", user_id, e),
+    //     }
+    // }
 }
 
 fn piece_type_from_str(piece_str: &str) -> PieceType {

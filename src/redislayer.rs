@@ -4,6 +4,7 @@ use redis::AsyncCommands;
 use redis::Client;
 use redis::Connection;
 use redis::ToRedisArgs;
+use redis_async::client::PubsubConnection;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -11,6 +12,7 @@ use dotenv::dotenv;
 use crate::gameserver::Game;
 use redis::RedisResult;
 use std::collections::HashMap;
+use redis_async::client::pubsub::pubsub_connect;
 
 #[derive(Clone)]
 pub struct RedisLayer {
@@ -154,5 +156,13 @@ impl RedisLayer {
         con
         // let mut pubsub: redis::PubSub<'_> = con.as_pubsub();
         // pubsub.subscribe(channel).expect("failed subscribing to channel");
+    }
+
+    pub async fn get_pubsub(&self) -> PubsubConnection{
+        dotenv().ok();
+        // let redis_url = env::var("REDIS_URL").unwrap();
+        let redis_url = "127.0.0.1".to_string();
+        let pubsub = pubsub_connect(redis_url, 6379).await.unwrap();
+        pubsub
     }
 }

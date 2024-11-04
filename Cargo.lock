@@ -1710,6 +1710,7 @@ dependencies = [
  "mysql",
  "pleco",
  "redis",
+ "redis-async",
  "reqwest",
  "serde",
  "serde_json",
@@ -1911,6 +1912,23 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "redis-async"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e44d2172ccb44736798c4cdc8690fb0a3776a74daa502bfe124708ffc144909c"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-sink",
+ "futures-util",
+ "log",
+ "pin-project",
+ "socket2",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

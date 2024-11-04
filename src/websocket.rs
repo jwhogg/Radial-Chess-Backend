@@ -15,6 +15,8 @@ use redis::PubSub;
 use pleco;
 use pleco::{core::piece_move::{MoveFlag, PreMoveInfo}, BitMove, Board, PieceType, SQ};
 use dotenv::dotenv;
+use std::time::Duration;
+use std::thread::sleep;
 
 pub async fn websocket_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(handle_socket)
@@ -97,6 +99,23 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
             gameserver::message_sender(sender, user_id, game_id).await;
         }
     });
+
+    // task::spawn({
+    //     let sender = sender.clone();
+    //     async move {
+    //         loop {
+    //             // info!("pinger waiting for sender lock..");
+    //             let mut sender = sender.lock().await;
+    //             // info!("pinger got sender lock");
+    //             let sender_status = sender.send(Message::Text("PING".to_string())).await;
+    //             match sender_status {
+    //                 Ok(o) => //info!("sent ping ok"),
+    //                 Err(e) => //info!("error sending ping"),
+    //             }
+    //             sleep(Duration::from_millis(1000));
+    //         }
+    //     }
+    // });
 }
 
 async fn ready_up(game: Game, user_id: u32, redislayer: &redislayer::RedisLayer) -> Result<(), String> {
@@ -141,31 +160,45 @@ async fn listen_for_token(stream: &mut WebSocket) -> Option<String> {
 async fn message_receiver(mut receiver: SplitStream<WebSocket>, sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, user_id: u32, game_id: u32) {
     let gameserver = GameServer::new(game_id, user_id).await;
 
-    while let Some(Ok(message)) = receiver.next().await {
-        match message {
-            Message::Text(text) => {
-                gameserver.handle_received_message(text).await;
+    while let Some(message_result) = receiver.next().await {
+        match message_result {
+            Ok(message) => {
+                // info!("Message received: {:?}", message);
+                match message {
+                    Message::Text(text) => {
+                        if text == "0" { //handle PING, (sent as a "0")
+                            // info!("waiting for sender lock (message receiver)");
+                            let mut sender = sender.lock().await;
+                            // info!("(message rec) got lock");
+                            let _send_result = sender.send(Message::Text("PONG".to_string())).await; //TODO: fail if this fails
+                            // match send_result {
+                            //     Ok(o) => info!("sent PONG"),
+                            //     Err(e) => info!("error sending PONG"),
+                            // }
+                        continue;
+                        }
+                        gameserver.handle_received_message(text).await;
+                    },
+                    Message::Close(reason) => {
+                        info!("Close message received: {:?}", reason);
+                        let mut sender = sender.lock().await;
+                        let _ = sender.send(Message::Close(reason)).await;
+                        info!("Connection closed by client");
+                        break;
+                    },
+                    _ => {
+                        info!("Unknown message type received");
+                    },
+                }
             },
-            Message::Ping(ping) => {
-                let mut sender = sender.lock().await;
-                let _ = sender.send(Message::Pong(ping)).await;
-            },
-            Message::Pong(pong) => {
-                let mut sender = sender.lock().await;
-                let _ = sender.send(Message::Ping(pong)).await;
-            },
-            Message::Close(reason) => {
-                // Handle closure by responding with a close frame
-                //TODO: logic for closing the game- inform opponent via redis, inform the counterpart message_sender function
-                let mut sender = sender.lock().await;
-                let _ = sender.send(Message::Close(reason)).await;
-                //gameserver.close();
-                info!("Connection closed");
-                break;
-            },
-            _ => {},
+            Err(e) => {
+                info!("Error receiving message: {}", e);
+                // Check if the connection was closed or another error occurred
+                break; // Exit the loop on error
+            }
         }
-    }    
+    }
+    info!("Exited message receiving loop for user: {}", user_id);
 }
 
 
