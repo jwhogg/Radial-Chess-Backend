@@ -159,7 +159,22 @@ async fn message_receiver(mut receiver: SplitStream<WebSocket>, sender: Arc<Mute
                         info!("Close message received: {:?}", reason);
                         let mut sender = sender.lock().await;
                         let _ = sender.send(Message::Close(reason)).await;
+                        let redislayer = RedisLayer::new().await;
+                        let _ = redislayer.publish(&format!("game_updates:{}", game_id), "game:close").await;
                         info!("Connection closed by client");
+                        let redis_layer = RedisLayer::new().await;
+                        let game = redis_layer.get_game(game_id).await.expect("failed to get game");
+                
+                        let rem_result = redis_layer.zrem("active_games", &game_id.to_string()).await;
+                        match rem_result {
+                            Ok(_) => info!("removed game from active game pool!"),
+                            Err(e) => info!("Failed to remove game from active games!, {}", e)
+                        }
+                
+                        let _ = redis_layer.del(&format!("user:{}",user_id)).await;
+                        let _ = redis_layer.del(&format!("user:{}",if game.player_black == user_id {game.player_white} else {game.player_black})).await;
+                
+                        let _ = redis_layer.publish(&format!("game_updates:{}", game.game_id), &format!("player:surrender:{}", user_id)).await;
                         break;
                     },
                     _ => {

@@ -136,7 +136,6 @@ impl GameServer {
 
 }
 
-
 fn construct_bit_move(parsed_move: Arc<EventData>, board: &Board) -> Result<BitMove, String> {
     let parsed_move = &parsed_move.this_move.clone().unwrap();
     let from = &parsed_move.from; //handle better
@@ -220,45 +219,52 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
                 let mut event_status = EventStatus::EchoFailure;
                 let parts: Vec<&str> = payload.split(':').collect();
 
-                if parts.len() != 3 {
-                    eprintln!("failed to parse subscribed message!");
-                    continue
-                }
-
                 let game = redislayer.get_game(game_id).await.expect("failed to get game");
 
+                let event_status: EventStatus;
                 let message: EventMessage;
-
-                if parts[0] == "move" && parts[1] == "new" {
-                    //if the player moving isnt us, send the move to the cleint
-                    if parts[2].parse().unwrap_or(0) != user_id {
-                        event_status = EventStatus::UpdateNewMove;
+                
+                if parts[0] == "move" && parts[1] == "new" && parts.len() == 3 {
+                    // If the player moving isn't the current user, send the move to the client.
+                    event_status = if parts[2].parse::<u32>().unwrap_or(0) != user_id {
+                        EventStatus::UpdateNewMove
                     } else {
-                        event_status = EventStatus::EchoSuccess;
-                    }
-
+                        EventStatus::EchoSuccess
+                    };
+                
                     message = format_game_move(game, user_id, event_status);
-
-                } else if parts[0] == "player" && parts[1] == "surrender" {
-                    if parts[2].parse().unwrap_or(0) != user_id {
-                        event_status = EventStatus::OpponentSurrender;
+                
+                } else if parts[0] == "player" && parts[1] == "surrender" && parts.len() == 3 {
+                    // Check if the surrendering player is not the current user.
+                    event_status = if parts[2].parse::<u32>().unwrap_or(0) != user_id {
+                        EventStatus::OpponentSurrender
                     } else {
-                        event_status = EventStatus::ConfirmSurrendered;
-                    }
-
+                        EventStatus::ConfirmSurrendered
+                    };
+                
                     message = format_surrender(user_id, game, event_status);
+                
+                } else if parts[0] == "game" && parts[1] == "close" && parts.len() == 2 {
+                    // Close the WebSocket connection.
+                    let mut sender = sender.lock().await;
+                    match sender.close().await {
+                        Ok(_) => info!("Closed connection!"),
+                        Err(e) => eprint!("Failed to close connection: {}", e),
+                    };
+                    return; // Exit the function after closing the connection.
                 } else {
-                    info!("failed to parse published message!");
-                    continue;
+                    // Handle invalid message types
+                    eprint!("Unrecognized message type.");
+                    return;
                 }
-
-                let message = Message::Text(serde_json::to_string(&message).unwrap());
+                
+                // Send the message after formatting it into JSON.
+                let message_text = Message::Text(serde_json::to_string(&message).unwrap());
                 let mut sender = sender.lock().await;
-                let send_status = sender.send(message).await;
-                match send_status {
-                    Ok(_) => {},
-                    Err(e) => eprint!("Error sending message to user {} from subscriber! {}", user_id, e)
-                }
+                
+                if let Err(e) = sender.send(message_text).await {
+                    eprint!("Error sending message to user {} from subscriber! {}", user_id, e);
+                }                
 
             },
             Err(e) => eprintln!("Error!: {}", e)
