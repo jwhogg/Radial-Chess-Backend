@@ -6,6 +6,9 @@
 
 A scalable, lightweight, and secure chess app with online matchmaking—written in Rust.
 
+## Demo
+<img width="30%" alt="Demo of a game" src="https://github.com/user-attachments/assets/65dc3ed1-da70-4d31-a273-349de6703df2">
+
 ## Table of Contents
 - [Introduction](#introduction)
 - [Back-end Technologies](#back-end-technologies)
@@ -42,7 +45,7 @@ Inspired by the [heorics](https://www.youtube.com/watch?v=7VSVfQcaxFY) of [liche
 - [x] Authentication
 - [x] Matchmaking
 - [x] WebSocket communication
-- [ ] Validating and syncing game state across players
+- [x] Validating and syncing game state across players
 - [ ] Handling networking edge cases
 - [ ] Testing with >2 concurrent players
 - [ ] Productionizing and hosting on cloud infrastructure
