@@ -49,7 +49,7 @@ impl GameServer {
     
         match parsed_message.event.as_str() {
             "game_move" => self.handle_move(parsed_message.data).await,
-            "game_surrender" => handle_surrender(),
+            "game_surrender" => self.handle_surrender(),
             "game_offer_draw" => handle_offer_draw(),
             "game_accept_draw" => handle_accept_draw(),
             "game_decline_draw" => handle_decline_draw(),
@@ -111,6 +111,10 @@ impl GameServer {
     
     }
 
+    fn handle_surrender(&self) {
+        //
+    }
+
 }
 
 
@@ -148,8 +152,7 @@ fn construct_bit_move(parsed_move: Arc<EventData>, board: &Board) -> Result<BitM
     }
 }
 
-fn handle_surrender() {
-}
+
 
 fn handle_offer_draw() {
 }
@@ -237,45 +240,6 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
             Err(e) => eprintln!("Error!: {}", e)
         }
     }
-
-    // loop {
-    //     //expect messages to be "in:this:form", we want something like "move:new:{user_id}"
-    //     let msg = sub.get_message().expect("Failed to receive message"); //get message is a blocking action
-    //     let payload: String = msg.get_payload().expect("Failed to get payload");
-    //     info!("subscribed received message {} for user: {}", payload, user_id);
-    //     let mut event_status = EventStatus::EchoFailure;
-    //     let parts: Vec<&str> = payload.split(':').collect();
-    //     if parts.len() == 3
-    //         && parts[0] == "move"
-    //         && parts[1] == "new"
-    //     {
-    //         if parts[2].parse().unwrap_or(0) != user_id {
-    //             event_status = EventStatus::UpdateNewMove;
-    //         } else if parts[2].parse().unwrap_or(0) == user_id {
-    //             event_status = EventStatus::EchoSuccess;
-    //         }
-    //     }
-
-    //     let game = redislayer.get_game(game_id).await.expect("failed to get game");
-    //     let message = EventMessage {
-    //         event: "game_move".to_string(),
-    //         data: EventData {
-    //             player: if game.player_white == user_id {PlayerColour::White} else {PlayerColour::Black},
-    //             this_move: game.previous_move.unwrap(),
-    //             status: event_status,
-    //         }
-    //     };
-    //     info!("going to send message to user: {}, : {:?}", user_id, message);
-    //     let message = Message::Text(serde_json::to_string(&message).unwrap());
-    //     info!("sending message to client: {} from subscriber...", user_id);
-    //     let mut sender = sender.lock().await;
-    //     info!("lock received for thread for user: {}", user_id);
-    //     let send_status = sender.send(message).await;
-    //     match send_status {
-    //         Ok(status) => info!("Message sent to user {}: {:?}", user_id, status),
-    //         Err(e) => info!("encountered error when sending to user {}: {:?}", user_id, e),
-    //     }
-    // }
 }
 
 fn piece_type_from_str(piece_str: &str) -> PieceType {

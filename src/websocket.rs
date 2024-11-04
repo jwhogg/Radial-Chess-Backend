@@ -99,23 +99,6 @@ async fn handle_socket(mut stream: WebSocket) { //also takes the token here
             gameserver::message_sender(sender, user_id, game_id).await;
         }
     });
-
-    // task::spawn({
-    //     let sender = sender.clone();
-    //     async move {
-    //         loop {
-    //             // info!("pinger waiting for sender lock..");
-    //             let mut sender = sender.lock().await;
-    //             // info!("pinger got sender lock");
-    //             let sender_status = sender.send(Message::Text("PING".to_string())).await;
-    //             match sender_status {
-    //                 Ok(o) => //info!("sent ping ok"),
-    //                 Err(e) => //info!("error sending ping"),
-    //             }
-    //             sleep(Duration::from_millis(1000));
-    //         }
-    //     }
-    // });
 }
 
 async fn ready_up(game: Game, user_id: u32, redislayer: &redislayer::RedisLayer) -> Result<(), String> {
@@ -163,18 +146,11 @@ async fn message_receiver(mut receiver: SplitStream<WebSocket>, sender: Arc<Mute
     while let Some(message_result) = receiver.next().await {
         match message_result {
             Ok(message) => {
-                // info!("Message received: {:?}", message);
                 match message {
                     Message::Text(text) => {
                         if text == "0" { //handle PING, (sent as a "0")
-                            // info!("waiting for sender lock (message receiver)");
                             let mut sender = sender.lock().await;
-                            // info!("(message rec) got lock");
                             let _send_result = sender.send(Message::Text("PONG".to_string())).await; //TODO: fail if this fails
-                            // match send_result {
-                            //     Ok(o) => info!("sent PONG"),
-                            //     Err(e) => info!("error sending PONG"),
-                            // }
                         continue;
                         }
                         gameserver.handle_received_message(text).await;

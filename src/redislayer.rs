@@ -146,22 +146,9 @@ impl RedisLayer {
         con.publish(channel, message).await
     }
 
-    //cannot subscribe using the multiplexed async con, and cannot deref con if we make it here
-    //it is left upto the function caller to do con.as_pubsub() and the later logic for subscribing
-    pub fn con_for_subscribe(&self) -> Connection {
-        dotenv().ok();
-        let redis_url = env::var("REDIS_URL").unwrap();
-        let client = Client::open(redis_url).expect("Invalid Redis URL");
-        let con = client.get_connection().expect("Failed to connect to Redis");
-        con
-        // let mut pubsub: redis::PubSub<'_> = con.as_pubsub();
-        // pubsub.subscribe(channel).expect("failed subscribing to channel");
-    }
-
     pub async fn get_pubsub(&self) -> PubsubConnection{
-        dotenv().ok();
         // let redis_url = env::var("REDIS_URL").unwrap();
-        let redis_url = "127.0.0.1".to_string();
+        let redis_url = "127.0.0.1".to_string(); //because this crate doesnt accept //redis...
         let pubsub = pubsub_connect(redis_url, 6379).await.unwrap();
         pubsub
     }
