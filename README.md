@@ -5,9 +5,8 @@
 <img width="60%" alt="Screenshot 2024-10-25 at 14 31 29" src="https://github.com/user-attachments/assets/eeb29645-a658-4d88-ac06-09dfc15afd10">
 
 A scalable, lightweight, and secure chess app with online matchmaking—written in Rust.
-![demo](https://github.com/user-attachments/assets/65dc3ed1-da70-4d31-a273-349de6703df2)
 
-
+<img width="30%" alt="Demo of a game" src="https://github.com/user-attachments/assets/65dc3ed1-da70-4d31-a273-349de6703df2">
 
 ## Table of Contents
 - [Introduction](#introduction)
