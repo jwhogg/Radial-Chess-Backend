@@ -45,7 +45,7 @@ Inspired by the [heorics](https://www.youtube.com/watch?v=7VSVfQcaxFY) of [liche
 - [x] Authentication
 - [x] Matchmaking
 - [x] WebSocket communication
-- [ ] Validating and syncing game state across players
+- [x] Validating and syncing game state across players
 - [ ] Handling networking edge cases
 - [ ] Testing with >2 concurrent players
 - [ ] Productionizing and hosting on cloud infrastructure
