@@ -13,6 +13,10 @@ RUN cargo build --release
 # Use a smaller image for the runtime
 FROM debian:buster-slim
 
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy the compiled binary from the builder
 COPY --from=builder /app/target/release/radial_chess /usr/local/bin/radial_chess
 
