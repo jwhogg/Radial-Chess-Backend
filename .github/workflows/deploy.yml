@@ -2,14 +2,13 @@ name: Deploy to VPS
 
 on:
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    workflows: ["Build and Push Docker Image to GHCR"]
     types:
       - completed
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    needs: build 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
