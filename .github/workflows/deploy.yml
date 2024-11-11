@@ -30,6 +30,9 @@ jobs:
         run: |
           # Use sshpass to login via password and run commands on the VPS
           sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_IP << EOF
+              # Authenticate Docker on VPS
+              echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+              
               # Stop and remove the old container if it exists
               docker stop $CONTAINER_NAME || true
               docker rm $CONTAINER_NAME || true
