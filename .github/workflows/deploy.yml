@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   workflow_run:
-    workflows: ["Build and Push Docker Image to GHCR"]
+    workflows: ["Build and Push Docker Image"]
     types:
       - completed
 
@@ -15,6 +15,10 @@ jobs:
 
       - name: Set up sshpass
         run: sudo apt-get install -y sshpass
+
+      - name: Authenticate Docker to GHCR
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Deploy to VPS
         env:
