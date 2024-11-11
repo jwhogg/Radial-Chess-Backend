@@ -36,6 +36,6 @@ jobs:
 
       - name: Build and Push Docker Image to GHCR
         run: |
-          IMAGE_NAME=ghcr.io/radial-chess-backend/radial_chess_server
+          IMAGE_NAME=ghcr.io/${{ github.actor }}/radial-chess-backend/radial_chess_server
           docker build -t $IMAGE_NAME:latest .
           docker push $IMAGE_NAME:latest
