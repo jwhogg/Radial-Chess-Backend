@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    workflows: ["Build and Push Docker Image to GHCR"]
     types:
       - completed
 
@@ -10,6 +10,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Debug Workflow Trigger
+        run: |
+          echo "This job was triggered by the completion of the build workflow."
+      
       - name: Checkout repository
         uses: actions/checkout@v2
 
