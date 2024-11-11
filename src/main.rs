@@ -49,7 +49,7 @@ async fn main() {
 
 
     // Run the Axum HTTP server concurrently
-    axum::Server::bind(&HOST_ADDR.parse().unwrap())
+    axum::Server::bind(&host_addr.parse().unwrap())
         .serve(app.into_make_service())
         .await
         .unwrap();
