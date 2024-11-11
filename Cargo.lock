@@ -1695,7 +1695,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "radial-chess"
+name = "radial_chess"
 version = "0.1.0"
 dependencies = [
  "axum",
