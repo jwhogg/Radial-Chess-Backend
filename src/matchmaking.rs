@@ -8,6 +8,7 @@ use serde_json::json;
 use crate::{authlayer, gameserver::Game, redislayer::{self, RedisLayer}};
 
 pub async fn matchmaking_options(req: Request<hyper::Body>) -> impl IntoResponse {
+    info!("hit matchmaking options");
     if req.method() == Method::OPTIONS { //respond to preflight request
         info!("OPTIONS responding to preflight check!");
         return cors_response(StatusCode::OK, json!({"message": "Preflight request OK"}));
@@ -73,6 +74,36 @@ pub async fn matchmaking_handler(req: Request<hyper::Body>) -> impl IntoResponse
 
 pub async fn bot_handler() {
  // TODO
+}
+
+pub async fn player_stats(req: Request<hyper::Body>) -> impl IntoResponse {
+
+    if req.method() == Method::OPTIONS { //respond to preflight request
+        info!("OPTIONS responding to preflight check!");
+        return cors_response(StatusCode::OK, json!({"message": "Preflight request OK"}));
+    }
+
+    info!("hit player stats");
+    let redislayer = RedisLayer::new().await;
+
+    let user_id = match authlayer::get_jwt_sub(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            return cors_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"message": format!("encountered error: {}", e.1)}),
+            );
+        }
+    };
+
+    info!("user id: {}", user_id);
+
+    let wins = redislayer.hget(&format!("player_stats:{}",user_id), "wins").await.unwrap_or("0".to_string());
+    let draws = redislayer.hget(&format!("player_stats:{}",user_id), "draws").await.unwrap_or("0".to_string());
+    let losses = redislayer.hget(&format!("player_stats:{}",user_id), "losses").await.unwrap_or("0".to_string());
+    info!("wins: {}", wins);
+    return cors_response(StatusCode::OK, json!({"wins": wins, "draws": draws, "losses": losses}));
+
 }
 
 pub async fn matchmaking_status(req: Request<hyper::Body>) -> impl IntoResponse {

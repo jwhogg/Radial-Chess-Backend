@@ -125,6 +125,11 @@ impl RedisLayer {
         con.hset(key, field, value).await
     }
 
+    pub async fn hincr(&self, key: &str, field: &str) -> Result<(), redis::RedisError> {
+        let mut con = self.connection.lock().await;
+        con.hincr(key, field, 1).await
+    }
+
     pub async fn hset_multiple<T: ToRedisArgs + Send + Sync>(&self, key: &str, fields: &[(String, T)]) -> Result<(), redis::RedisError> {
         let mut con = self.connection.lock().await;
         for (field, value) in fields {

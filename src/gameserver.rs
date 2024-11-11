@@ -123,7 +123,7 @@ impl GameServer {
             Ok(_) => info!("removed game from active game pool!"),
             Err(e) => info!("Failed to remove game from active games!, {}", e)
         }
-
+    
         let _ = redis_layer.del(&format!("user:{}",self.user_id)).await;
         let _ = redis_layer.del(&format!("user:{}",if game.player_black == self.user_id {game.player_white} else {game.player_black})).await;
 
@@ -221,6 +221,8 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
 
                 let game = redislayer.get_game(game_id).await.expect("failed to get game");
 
+                let opponent_id = if game.player_black == user_id {game.player_white} else {game.player_black};
+
                 let event_status: EventStatus;
                 let message: EventMessage;
                 
@@ -243,7 +245,12 @@ pub async fn message_sender(sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, u
                     };
                 
                     message = format_surrender(user_id, game, event_status);
-                
+
+                    if parts[2].parse::<u32>().unwrap_or(0) == user_id {
+                        let _ = redislayer.hincr(&format!("user_stats:{}",user_id), "losses").await;
+                    } else if parts[2].parse::<u32>().unwrap_or(0) == opponent_id {
+                        let _ = redislayer.hincr(&format!("user_stats:{}",opponent_id), "wins").await;
+                    }
                 } else if parts[0] == "game" && parts[1] == "close" && parts.len() == 2 {
                     // Close the WebSocket connection.
                     let mut sender = sender.lock().await;
