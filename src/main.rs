@@ -42,7 +42,7 @@ async fn main() {
         .route("/playerstats", options(player_stats))
         .route("/playerstats", get(player_stats))
         // .route("/bot", post(bot_handler))
-        // .route("/test", get(test_setup))
+        .route("/test", get(test_setup))
         .route("/matchmaking", get(matchmaking_status).layer(middleware::from_fn(validate_jwt_sub)));
         // .layer(cors);
         // .route("/test", get(test_setup)).layer(CorsLayer::very_permissive()).layer(middleware::from_fn(validate_jwt_sub));
