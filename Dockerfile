@@ -1,5 +1,5 @@
 # Start with a Rust base image
-FROM rust:1.78 as builder
+FROM rust:1.78-bullseye as builder
 
 # Set up working directory
 WORKDIR /app
