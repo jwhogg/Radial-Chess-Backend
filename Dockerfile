@@ -14,7 +14,7 @@ RUN cargo build --release
 FROM debian:bullseye-slim
 
 RUN apt-get update && apt-get install -y \
-    libssl3 \
+    libssl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled binary from the builder
