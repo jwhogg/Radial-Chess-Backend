@@ -1,5 +1,5 @@
 # Start with a Rust base image
-FROM rust:1.78-bullseye as builder
+FROM rust:1.78-bookworm as builder
 
 # Set up working directory
 WORKDIR /app
@@ -11,10 +11,10 @@ COPY . .
 RUN cargo build --release
 
 # Use a smaller image for the runtime
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
-    libssl \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled binary from the builder
