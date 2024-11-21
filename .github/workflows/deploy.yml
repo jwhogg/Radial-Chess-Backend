@@ -45,5 +45,5 @@ jobs:
               docker pull $IMAGE_NAME:latest
               
               # Run the new container (adjust the port mapping as necessary)
-              docker run -d --name $CONTAINER_NAME -p 80:80 -p 8080:8080 $IMAGE_NAME:latest
+              docker run -d --name $CONTAINER_NAME -p 80:80 -p 8080:8080 -e REDIS_URL="${{ secrets.REDIS_URL }}" -e DATABASE_URL="${{ secrets.DATABASE_URL }}" -e JKWS_URL="${{ secrets.JKWS_URL }}" $IMAGE_NAME:latest
           EOF
