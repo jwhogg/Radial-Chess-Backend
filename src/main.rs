@@ -21,7 +21,8 @@ use matchmaking::{bot_handler, match_maker, matchmaking_handler, matchmaking_opt
 mod testing;
 use testing::test_setup;
 
-const DEFAULT_HOST_ADDR: &str = "127.0.0.1:8080";
+// const DEFAULT_HOST_ADDR: &str = "127.0.0.1:8080";
+const DEFAULT_HOST_ADDR: &str = "0.0.0.0:8081";
 
 #[tokio::main]
 async fn main() {
